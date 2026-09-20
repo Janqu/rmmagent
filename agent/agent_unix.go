@@ -19,6 +19,7 @@ import (
 	"crypto/tls"
 	"errors"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -362,6 +363,8 @@ func (a *Agent) AgentUpdate(url, inno, version string) error {
 		opts.Command = "systemctl restart tacticalagent.service"
 	case "darwin":
 		opts.Command = "launchctl kickstart -k system/tacticalagent"
+	case "freebsd":
+		opts.Command = fmt.Sprintf("service %s restart", freebsdSvcName)
 	default:
 		return nil
 	}
@@ -459,6 +462,18 @@ func (a *Agent) GetWMIInfo() map[string]interface{} {
 	host, err := ps.Host()
 	if err != nil {
 		a.Logger.Errorln("GetWMIInfo() ps.Host()", err)
+		// go-sysinfo has no provider for this OS (e.g. freebsd) — fall
+		// back to net.InterfaceAddrs(), which is pure stdlib and works
+		// everywhere.
+		if addrs, aerr := net.InterfaceAddrs(); aerr == nil {
+			for _, addr := range addrs {
+				ip := addr.String()
+				if strings.Contains(ip, "127.0.") || strings.HasPrefix(ip, "::1/") || strings.Contains(ip, "fe80:") {
+					continue
+				}
+				ips = append(ips, ip)
+			}
+		}
 	} else {
 		for _, ip := range host.Info().IPs {
 			if strings.Contains(ip, "127.0.") || strings.Contains(ip, "::1/128") {
@@ -482,6 +497,22 @@ func (a *Agent) GetWMIInfo() map[string]interface{} {
 			ret := fmt.Sprintf("%s %s %s %s %s %s", disk.Vendor, disk.Model, disk.StorageController, disk.DriveType, disk.Name, ByteCountSI(disk.SizeBytes))
 			ret = strings.TrimSpace(strings.ReplaceAll(ret, "unknown", ""))
 			disks = append(disks, ret)
+		}
+	}
+
+	if runtime.GOOS == "freebsd" && len(disks) == 0 {
+		// ghw.Block() has no freebsd provider; geom(8) already knows the
+		// same info (device name, description, size) in base FreeBSD.
+		opts := a.NewCMDOpts()
+		opts.Command = `geom disk list | awk '/^Geom name:/{name=$3} /Mediasize:/{size=$2} /descr:/{sub(/^[ \t]*descr:[ \t]*/,""); print name": "$0" "size}'`
+		out := strings.TrimSpace(a.CmdV2(opts).Stdout)
+		if out != "" {
+			for _, line := range strings.Split(out, "\n") {
+				line = strings.TrimSpace(line)
+				if line != "" {
+					disks = append(disks, line)
+				}
+			}
 		}
 	}
 	wmiInfo["disks"] = disks
@@ -515,6 +546,31 @@ func (a *Agent) GetWMIInfo() map[string]interface{} {
 		opts.Command = "sysctl hw.model"
 		out := a.CmdV2(opts)
 		wmiInfo["make_model"] = strings.ReplaceAll(out.Stdout, "hw.model: ", "")
+	}
+
+	if runtime.GOOS == "freebsd" {
+		// ghw/go-sysinfo have no chassis provider for freebsd; read the
+		// SMBIOS data the kernel already exports via kenv(1) instead.
+		makerOpts := a.NewCMDOpts()
+		makerOpts.Command = "kenv -q smbios.system.maker"
+		maker := strings.TrimSpace(a.CmdV2(makerOpts).Stdout)
+
+		productOpts := a.NewCMDOpts()
+		productOpts.Command = "kenv -q smbios.system.product"
+		product := strings.TrimSpace(a.CmdV2(productOpts).Stdout)
+
+		if maker != "" || product != "" {
+			wmiInfo["make_model"] = strings.TrimSpace(fmt.Sprintf("%s %s", maker, product))
+		}
+
+		if len(cpus) == 0 {
+			cpuOpts := a.NewCMDOpts()
+			cpuOpts.Command = "sysctl -n hw.model"
+			if model := strings.TrimSpace(a.CmdV2(cpuOpts).Stdout); model != "" {
+				cpus = append(cpus, model)
+				wmiInfo["cpus"] = cpus
+			}
+		}
 	}
 
 	// gfx cards
@@ -569,6 +625,14 @@ func (a *Agent) GetWMIInfo() map[string]interface{} {
 		} else {
 			wmiInfo["serialnumber"] = removeNewlines(out.Stdout)
 		}
+	case "freebsd":
+		opts := a.NewCMDOpts()
+		opts.Command = "kenv -q smbios.system.serial"
+		serial := strings.TrimSpace(a.CmdV2(opts).Stdout)
+		if serial == "" {
+			serial = "n/a"
+		}
+		wmiInfo["serialnumber"] = serial
 	default:
 		wmiInfo["serialnumber"] = "n/a"
 	}

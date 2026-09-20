@@ -36,6 +36,7 @@ import (
 	rmm "github.com/amidaware/rmmagent/shared"
 	"github.com/creack/pty"
 	ps "github.com/elastic/go-sysinfo"
+	sysinfotypes "github.com/elastic/go-sysinfo/types"
 	gocmd "github.com/go-cmd/cmd"
 	"github.com/go-resty/resty/v2"
 	"github.com/kardianos/service"
@@ -109,6 +110,8 @@ const (
 	macPlistPath         = "/Library/LaunchDaemons/tacticalagent.plist"
 	macPlistName         = "tacticalagent"
 	defaultMacMeshSvcDir = "/usr/local/mesh_services"
+	freebsdRcPath        = "/usr/local/etc/rc.d/tacticalagent"
+	freebsdSvcName       = "tacticalagent"
 )
 
 var defaultWinTmpDir = filepath.Join(os.Getenv("PROGRAMDATA"), "TacticalRMM")
@@ -117,8 +120,13 @@ var natsCheckin = []string{"agent-hello", "agent-agentinfo", "agent-disks", "age
 var limitNatsData = []string{"agent-winsvc", "agent-wmi"}
 
 func New(logger *logrus.Logger, version string) *Agent {
-	host, _ := ps.Host()
-	info := host.Info()
+	// go-sysinfo has no provider for some OSes (e.g. freebsd), so
+	// host can be nil here — fall back to a zero-value HostInfo
+	// rather than crashing on the nil dereference.
+	var info sysinfotypes.HostInfo
+	if host, err := ps.Host(); err == nil {
+		info = host.Info()
+	}
 	pd := filepath.Join(os.Getenv("ProgramFiles"), progFilesName)
 	exe := filepath.Join(pd, winExeName)
 	sd := os.Getenv("SystemDrive")

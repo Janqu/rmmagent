@@ -80,6 +80,24 @@ func (a *Agent) checkExistingAndRemove(silent bool) {
 		os.RemoveAll(nixAgentDir)
 		os.Remove(macPlistPath)
 	}
+
+	if runtime.GOOS == "freebsd" {
+		if trmm.FileExists(freebsdRcPath) {
+			a.Logger.Infoln("Existing tacticalagent rc.d service found, attempting to remove...")
+			stopOpts := a.NewCMDOpts()
+			stopOpts.Command = fmt.Sprintf("service %s stop", freebsdSvcName)
+			a.CmdV2(stopOpts)
+
+			disableOpts := a.NewCMDOpts()
+			disableOpts.Command = fmt.Sprintf("sysrc -x %s_enable", freebsdSvcName)
+			a.CmdV2(disableOpts)
+		}
+
+		os.Remove(freebsdRcPath)
+		os.Remove(etcConfig)
+		os.RemoveAll(nixAgentDir)
+		os.RemoveAll(nixMeshDir)
+	}
 }
 
 func DisableSleepHibernate() {}

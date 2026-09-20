@@ -305,6 +305,43 @@ func (a *Agent) Install(i *Installer) {
 		a.CmdV2(opts)
 	}
 
+	if runtime.GOOS == "freebsd" {
+		os.MkdirAll(nixAgentBinDir, 0755)
+		self, _ := os.Executable()
+		copyFile(self, nixAgentBin)
+		os.Chmod(nixAgentBin, 0755)
+
+		// uses the base-system daemon(8) tool to background the agent,
+		// track its pid, and restart it if it exits (-r)
+		rc := fmt.Sprintf(`#!/bin/sh
+#
+# PROVIDE: %s
+# REQUIRE: NETWORKING
+# KEYWORD: shutdown
+
+. /etc/rc.subr
+
+name="%s"
+rcvar="${name}_enable"
+pidfile="/var/run/${name}.pid"
+command="/usr/sbin/daemon"
+command_args="-f -P ${pidfile} -r %s -m svc"
+
+load_rc_config $name
+run_rc_command "$1"
+`, freebsdSvcName, freebsdSvcName, nixAgentBin)
+
+		os.WriteFile(freebsdRcPath, []byte(rc), 0755)
+
+		enableOpts := a.NewCMDOpts()
+		enableOpts.Command = fmt.Sprintf("sysrc %s_enable=YES", freebsdSvcName)
+		a.CmdV2(enableOpts)
+
+		startOpts := a.NewCMDOpts()
+		startOpts.Command = fmt.Sprintf("service %s start", freebsdSvcName)
+		a.CmdV2(startOpts)
+	}
+
 	if runtime.GOOS == "windows" {
 		os.MkdirAll(filepath.Join(a.ProgramDir, "bin"), 0755)
 
