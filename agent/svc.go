@@ -105,6 +105,8 @@ func (a *Agent) AgentSvc(nc *nats.Conn) {
 		a.SendSoftware()
 	}
 
+	a.RunStartupTasks()
+
 	if runtime.GOOS == "darwin" {
 		go a.FixVenturaMesh()
 	}
