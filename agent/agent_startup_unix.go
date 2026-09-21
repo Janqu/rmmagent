@@ -22,3 +22,6 @@ func startupTaskIDs() []int {
 	}
 	return parseTaskIDs(string(b))
 }
+
+// WatchLogons is Windows-only.
+func (a *Agent) WatchLogons() {}

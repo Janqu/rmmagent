@@ -30,16 +30,17 @@ func parseTaskIDs(s string) []int {
 // RunStartupTasks runs the automated tasks listed in the local startup list
 // (Windows: HKLM\SOFTWARE\TacticalRMM\StartupTasks, other: /etc/tacticalagent-startup-tasks).
 // Each task is fetched from the server like a scheduled task, so its result shows in the task history.
-func (a *Agent) RunStartupTasks() {
-	ids := startupTaskIDs()
+func (a *Agent) RunStartupTasks() { a.runTaskIDs("startup", startupTaskIDs(), true) }
+
+func (a *Agent) runTaskIDs(label string, ids []int, jitter bool) {
 	if len(ids) == 0 {
 		return
 	}
-	a.Logger.Infof("Running startup tasks: %v", ids)
+	a.Logger.Infof("Running %s tasks: %v", label, ids)
 	for _, id := range ids {
 		go func(id int) {
-			if err := a.RunTask(id, true); err != nil {
-				a.Logger.Errorf("startup task %d: %v", id, err)
+			if err := a.RunTask(id, jitter); err != nil {
+				a.Logger.Errorf("%s task %d: %v", label, id, err)
 			}
 		}(id)
 	}
