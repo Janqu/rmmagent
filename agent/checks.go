@@ -20,7 +20,7 @@ import (
 	"sync"
 	"time"
 
-	rmm "github.com/Janqu/qdt-rmm-go/shared"
+	rmm "github.com/Janqu/qdt-rmm-agent/shared"
 	ps "github.com/elastic/go-sysinfo"
 	"github.com/go-resty/resty/v2"
 	"github.com/shirou/gopsutil/v3/disk"

@@ -32,7 +32,7 @@ import (
 
 	"time"
 
-	rmm "github.com/Janqu/qdt-rmm-go/shared"
+	rmm "github.com/Janqu/qdt-rmm-agent/shared"
 	"github.com/creack/pty"
 	ps "github.com/elastic/go-sysinfo"
 	sysinfotypes "github.com/elastic/go-sysinfo/types"

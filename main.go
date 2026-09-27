@@ -12,6 +12,7 @@ https://license.tacticalrmm.com
 package main
 
 import (
+	"encoding/json"
 	"flag"
 	"fmt"
 	"os"
@@ -19,7 +20,7 @@ import (
 	"path/filepath"
 	"runtime"
 
-	"github.com/Janqu/qdt-rmm-go/agent"
+	"github.com/Janqu/qdt-rmm-agent/agent"
 	"github.com/kardianos/service"
 	"github.com/sirupsen/logrus"
 )
@@ -116,6 +117,12 @@ func main() {
 		a.UninstallCleanup()
 	case "publicip":
 		fmt.Println(a.PublicIP())
+	case "health":
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+		if err := enc.Encode(a.Health()); err != nil {
+			log.Fatalln(err)
+		}
 	case "getpython":
 		a.GetPython(true)
 	case "installdeno":

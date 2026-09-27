@@ -15,7 +15,7 @@ import (
 	"fmt"
 	"strings"
 
-	rmm "github.com/Janqu/qdt-rmm-go/shared"
+	rmm "github.com/Janqu/qdt-rmm-agent/shared"
 	ps "github.com/elastic/go-sysinfo"
 	gops "github.com/shirou/gopsutil/v3/process"
 )

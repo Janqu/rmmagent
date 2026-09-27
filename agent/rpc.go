@@ -21,7 +21,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	rmm "github.com/Janqu/qdt-rmm-go/shared"
+	rmm "github.com/Janqu/qdt-rmm-agent/shared"
 	nats "github.com/nats-io/nats.go"
 	"github.com/ugorji/go/codec"
 )
@@ -86,6 +86,14 @@ func (a *Agent) RunRPC() {
 				ret := codec.NewEncoderBytes(&resp, new(codec.MsgpackHandle))
 				a.Logger.Debugln("pong")
 				ret.Encode("pong")
+				msg.Respond(resp)
+			}()
+
+		case "agenthealth":
+			go func() {
+				var resp []byte
+				ret := codec.NewEncoderBytes(&resp, new(codec.MsgpackHandle))
+				ret.Encode(a.Health())
 				msg.Respond(resp)
 			}()
 

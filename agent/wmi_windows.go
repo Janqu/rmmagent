@@ -14,7 +14,7 @@ package agent
 import (
 	"encoding/json"
 
-	rmm "github.com/Janqu/qdt-rmm-go/shared"
+	rmm "github.com/Janqu/qdt-rmm-agent/shared"
 	"github.com/StackExchange/wmi"
 )
 

@@ -1,4 +1,4 @@
-module github.com/Janqu/qdt-rmm-go
+module github.com/Janqu/qdt-rmm-agent
 
 go 1.20
 

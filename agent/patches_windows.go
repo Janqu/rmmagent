@@ -15,7 +15,7 @@ import (
 	"fmt"
 	"time"
 
-	rmm "github.com/Janqu/qdt-rmm-go/shared"
+	rmm "github.com/Janqu/qdt-rmm-agent/shared"
 )
 
 func (a *Agent) GetWinUpdates() {

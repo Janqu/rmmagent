@@ -16,7 +16,7 @@ import (
 	"strings"
 	"time"
 
-	rmm "github.com/Janqu/qdt-rmm-go/shared"
+	rmm "github.com/Janqu/qdt-rmm-agent/shared"
 	trmm "github.com/wh1te909/trmm-shared"
 	"golang.org/x/sys/windows/svc"
 	"golang.org/x/sys/windows/svc/mgr"
