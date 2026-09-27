@@ -16,6 +16,11 @@ file for the target architecture with the existing release tooling before buildi
 release; a plain Go cross-build alone does not embed those resources or sign the binary.
 `build/setup.iss` supplies the QDT RMM installer name and publisher.
 
+## Branding
+
+The agent symbol lives at `assets/qdt-rmm-agent.svg`. Use it as the source asset for
+release icons, installer artwork, and RMM UI agent badges.
+
 ## Compatibility
 
 QDT RMM is the visible product name. Existing protocol and upgrade identifiers remain
