@@ -249,8 +249,12 @@ func (a *Agent) RunScript(code string, shell string, args []string, timeout int,
 		found := false
 		for i, v := range envVars {
 			if strings.HasPrefix(v, "DENO_PERMISSIONS=") {
-				permissions := strings.Split(v, "=")[1]
-				opts.Args = append(opts.Args, strings.Split(permissions, " ")...)
+				permissions := strings.TrimPrefix(v, "DENO_PERMISSIONS=")
+				permissionArgs, err := denoPermissionArgs(permissions)
+				if err != nil {
+					return "", err.Error(), 65, err
+				}
+				opts.Args = append(opts.Args, permissionArgs...)
 				// Remove the DENO_PERMISSIONS variable from the environment variables slice.
 				// It's possible more variables may exist with the same prefix.
 				envVars = append(envVars[:i], envVars[i+1:]...)
@@ -259,7 +263,11 @@ func (a *Agent) RunScript(code string, shell string, args []string, timeout int,
 			}
 		}
 		if !found && denoDefaultPermissions != "" {
-			opts.Args = append(opts.Args, strings.Split(denoDefaultPermissions, " ")...)
+			permissionArgs, err := denoPermissionArgs(denoDefaultPermissions)
+			if err != nil {
+				return "", err.Error(), 65, err
+			}
+			opts.Args = append(opts.Args, permissionArgs...)
 		}
 
 		// Can't append a variadic slice after a string arg.

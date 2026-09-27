@@ -55,3 +55,19 @@ func TestTerminalSessionLimitReached(t *testing.T) {
 		t.Fatal("limit not reached")
 	}
 }
+
+func TestDenoPermissionArgs(t *testing.T) {
+	got, err := denoPermissionArgs(" --allow-read=/tmp   --deny-net --no-prompt ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(got, " ") != "--allow-read=/tmp --deny-net --no-prompt" {
+		t.Fatalf("got %#v", got)
+	}
+	if _, err := denoPermissionArgs("--inspect"); err == nil {
+		t.Fatal("unsupported deno arg accepted")
+	}
+	if _, err := denoPermissionArgs(strings.Repeat("--allow-read ", maxDenoPermissionArgs+1)); err == nil {
+		t.Fatal("too many deno args accepted")
+	}
+}

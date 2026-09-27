@@ -52,6 +52,7 @@ const (
 	maxExecArgBytes              = 8 << 10
 	maxExecEnvVars               = 128
 	maxExecEnvVarBytes           = 8 << 10
+	maxDenoPermissionArgs        = 32
 	maxTerminalSessions          = 4
 	terminalIdleTimeout          = 30 * time.Minute
 )
@@ -133,6 +134,31 @@ func validateExecSlices(args, envVars []string) error {
 		}
 	}
 	return nil
+}
+
+func denoPermissionArgs(raw string) ([]string, error) {
+	fields := strings.Fields(raw)
+	if len(fields) > maxDenoPermissionArgs {
+		return nil, fmt.Errorf("too many deno permission arguments: %d", len(fields))
+	}
+	for _, field := range fields {
+		if len(field) > maxExecArgBytes {
+			return nil, fmt.Errorf("deno permission argument is too large: %d bytes", len(field))
+		}
+		if !validDenoPermissionArg(field) {
+			return nil, fmt.Errorf("unsupported deno permission argument: %s", field)
+		}
+	}
+	return fields, nil
+}
+
+func validDenoPermissionArg(arg string) bool {
+	for _, prefix := range []string{"--allow-", "--deny-", "--no-"} {
+		if strings.HasPrefix(arg, prefix) {
+			return true
+		}
+	}
+	return false
 }
 
 func terminalSessionLimitReached(count int) bool {

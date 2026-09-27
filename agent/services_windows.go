@@ -12,6 +12,8 @@ https://license.tacticalrmm.com
 package agent
 
 import (
+	"fmt"
+	"strings"
 	"time"
 
 	rmm "github.com/Janqu/qdt-rmm-go/shared"
@@ -21,6 +23,10 @@ import (
 )
 
 func GetServiceStatus(name string) (string, error) {
+	name, err := validateServiceName(name)
+	if err != nil {
+		return "n/a", err
+	}
 	conn, err := mgr.Connect()
 	if err != nil {
 		return "n/a", err
@@ -42,6 +48,10 @@ func GetServiceStatus(name string) (string, error) {
 }
 
 func (a *Agent) ControlService(name, action string) rmm.WinSvcResp {
+	name, err := validateServiceName(name)
+	if err != nil {
+		return rmm.WinSvcResp{Success: false, ErrorMsg: err.Error()}
+	}
 	conn, err := mgr.Connect()
 	if err != nil {
 		return rmm.WinSvcResp{Success: false, ErrorMsg: err.Error()}
@@ -87,6 +97,10 @@ func (a *Agent) ControlService(name, action string) rmm.WinSvcResp {
 }
 
 func (a *Agent) EditService(name, startupType string) rmm.WinSvcResp {
+	name, err := validateServiceName(name)
+	if err != nil {
+		return rmm.WinSvcResp{Success: false, ErrorMsg: err.Error()}
+	}
 	conn, err := mgr.Connect()
 	if err != nil {
 		return rmm.WinSvcResp{Success: false, ErrorMsg: err.Error()}
@@ -135,6 +149,11 @@ func (a *Agent) EditService(name, startupType string) rmm.WinSvcResp {
 
 func (a *Agent) GetServiceDetail(name string) trmm.WindowsService {
 	ret := trmm.WindowsService{}
+	name, err := validateServiceName(name)
+	if err != nil {
+		a.Logger.Errorln(err)
+		return ret
+	}
 
 	conn, err := mgr.Connect()
 	if err != nil {
@@ -249,6 +268,20 @@ func WaitForService(name string, status string, retries int) {
 			break
 		}
 	}
+}
+
+func validateServiceName(name string) (string, error) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return "", fmt.Errorf("service name is required")
+	}
+	if len(name) > 256 {
+		return "", fmt.Errorf("service name is too long")
+	}
+	if strings.ContainsAny(name, "\x00\\/") {
+		return "", fmt.Errorf("service name contains invalid characters")
+	}
+	return name, nil
 }
 
 func serviceExists(name string) bool {
