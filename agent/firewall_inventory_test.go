@@ -29,3 +29,18 @@ func TestParseFirewallConfig(t *testing.T) {
 		t.Fatalf("unexpected counts: %+v", cfg)
 	}
 }
+
+func TestParsePFStateStats(t *testing.T) {
+	stats := parsePFStateStats(`Status: Enabled for 1 days
+State Table                          Total             Rate
+  current entries                      42
+  searches                         100001            1.0/s
+  inserts                            2002            0.2/s
+  removals                           1960            0.2/s`)
+	if stats == nil {
+		t.Fatal("expected stats")
+	}
+	if stats.CurrentEntries != 42 || stats.Searches != 100001 || stats.Inserts != 2002 || stats.Removals != 1960 {
+		t.Fatalf("unexpected stats: %+v", stats)
+	}
+}

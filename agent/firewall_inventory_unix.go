@@ -3,8 +3,11 @@
 package agent
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/xml"
 	"os"
+	"strconv"
 	"strings"
 
 	rmm "github.com/Janqu/qdt-rmm-agent/shared"
@@ -50,12 +53,20 @@ func collectFirewallInventory(appliance string) *rmm.FirewallInventory {
 		return inv
 	}
 	inv.ConfigReadable = true
+	inv.ConfigSHA256 = sha256Hex(data)
+	if info, err := os.Stat(firewallConfigPath); err == nil {
+		modified := info.ModTime().UTC()
+		inv.ConfigModified = &modified
+	}
 
 	cfg := parseFirewallConfig(data)
 	inv.Interfaces = cfg.Interfaces
 	inv.RuleCount = cfg.RuleCount
 	inv.NATRuleCount = cfg.NATRuleCount
 	inv.AliasCount = cfg.AliasCount
+	if out, err := runPatchInventoryCommand("pfctl", "-si"); err == nil {
+		inv.PFStates = parsePFStateStats(out)
+	}
 	return inv
 }
 
@@ -111,6 +122,43 @@ func firewallVersion(appliance string) string {
 		}
 	}
 	return ""
+}
+
+func sha256Hex(data []byte) string {
+	sum := sha256.Sum256(data)
+	return hex.EncodeToString(sum[:])
+}
+
+func parsePFStateStats(output string) *rmm.PFStateStats {
+	stats := &rmm.PFStateStats{}
+	for _, line := range strings.Split(output, "\n") {
+		line = strings.TrimSpace(line)
+		lower := strings.ToLower(line)
+		switch {
+		case strings.HasPrefix(lower, "current entries"):
+			stats.CurrentEntries = lastIntField(line)
+		case strings.HasPrefix(lower, "searches"):
+			stats.Searches = lastIntField(line)
+		case strings.HasPrefix(lower, "inserts"):
+			stats.Inserts = lastIntField(line)
+		case strings.HasPrefix(lower, "removals"):
+			stats.Removals = lastIntField(line)
+		}
+	}
+	if stats.CurrentEntries == 0 && stats.Searches == 0 && stats.Inserts == 0 && stats.Removals == 0 {
+		return nil
+	}
+	return stats
+}
+
+func lastIntField(line string) int {
+	fields := strings.Fields(line)
+	for i := len(fields) - 1; i >= 0; i-- {
+		if n, err := strconv.Atoi(fields[i]); err == nil {
+			return n
+		}
+	}
+	return 0
 }
 
 func (a *Agent) FirewallInventory() *rmm.FirewallInventory {

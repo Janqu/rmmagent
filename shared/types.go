@@ -156,13 +156,23 @@ type FirewallInventory struct {
 	Version         string              `json:"version,omitempty"`
 	ConfigPath      string              `json:"config_path,omitempty"`
 	ConfigReadable  bool                `json:"config_readable"`
+	ConfigSHA256    string              `json:"config_sha256,omitempty"`
+	ConfigModified  *time.Time          `json:"config_modified,omitempty"`
 	Interfaces      []FirewallInterface `json:"interfaces,omitempty"`
 	RuleCount       int                 `json:"rule_count"`
 	NATRuleCount    int                 `json:"nat_rule_count"`
 	AliasCount      int                 `json:"alias_count"`
+	PFStates        *PFStateStats       `json:"pf_states,omitempty"`
 	PatchAllAllowed bool                `json:"patch_all_allowed"`
 	FirmwareManaged bool                `json:"firmware_managed"`
 	SafetyNote      string              `json:"safety_note,omitempty"`
+}
+
+type PFStateStats struct {
+	CurrentEntries int `json:"current_entries"`
+	Searches       int `json:"searches"`
+	Inserts        int `json:"inserts"`
+	Removals       int `json:"removals"`
 }
 
 type FirewallInterface struct {
