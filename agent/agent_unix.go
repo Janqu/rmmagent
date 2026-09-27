@@ -1025,6 +1025,15 @@ func (a *Agent) GetWinUpdates() {}
 
 func (a *Agent) InstallUpdates(guids []string) {}
 
+func (a *Agent) PatchStatus() rmm.PatchStatus {
+	return rmm.PatchStatus{
+		AgentID:   a.AgentID,
+		Platform:  a.Platform,
+		Supported: false,
+		CheckedAt: time.Now().UTC(),
+	}
+}
+
 func (a *Agent) installMesh(meshbin, exe, proxy string) (string, error) {
 	return "not implemented", nil
 }

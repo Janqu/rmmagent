@@ -119,6 +119,23 @@ type AgentNeedsReboot struct {
 	NeedsReboot bool   `json:"needs_reboot"`
 }
 
+type PatchStatus struct {
+	AgentID        string    `json:"agent_id"`
+	Platform       string    `json:"platform"`
+	Supported      bool      `json:"supported"`
+	CheckedAt      time.Time `json:"checked_at"`
+	Installed      int       `json:"installed"`
+	Missing        int       `json:"missing"`
+	Downloaded     int       `json:"downloaded"`
+	Critical       int       `json:"critical"`
+	Important      int       `json:"important"`
+	Security       int       `json:"security"`
+	Other          int       `json:"other"`
+	NeedsReboot    bool      `json:"needs_reboot"`
+	Error          string    `json:"error,omitempty"`
+	MissingUpdates []string  `json:"missing_updates,omitempty"`
+}
+
 type ChocoInstalled struct {
 	AgentID   string `json:"agent_id"`
 	Installed bool   `json:"installed"`

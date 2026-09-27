@@ -97,6 +97,14 @@ func (a *Agent) RunRPC() {
 				msg.Respond(resp)
 			}()
 
+		case "patchstatus":
+			go func() {
+				var resp []byte
+				ret := codec.NewEncoderBytes(&resp, new(codec.MsgpackHandle))
+				ret.Encode(a.PatchStatus())
+				msg.Respond(resp)
+			}()
+
 		case "patchmgmt":
 			go func(p *NatsMsg) {
 				var resp []byte
