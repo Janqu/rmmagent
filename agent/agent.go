@@ -12,7 +12,6 @@ https://license.tacticalrmm.com
 package agent
 
 import (
-	"bytes"
 	"context"
 	"crypto/tls"
 	"encoding/json"
@@ -33,7 +32,7 @@ import (
 
 	"time"
 
-	rmm "github.com/amidaware/rmmagent/shared"
+	rmm "github.com/Janqu/qdt-rmm-go/shared"
 	"github.com/creack/pty"
 	ps "github.com/elastic/go-sysinfo"
 	sysinfotypes "github.com/elastic/go-sysinfo/types"
@@ -194,6 +193,7 @@ func New(logger *logrus.Logger, version string) *Agent {
 	restyC.SetTimeout(15 * time.Second)
 	restyC.SetDebug(logger.IsLevelEnabled(logrus.DebugLevel))
 	if insecure {
+		logger.Warnln("TLS certificate verification disabled for API client")
 		insecureConf := &tls.Config{
 			InsecureSkipVerify: true,
 		}
@@ -236,9 +236,9 @@ func New(logger *logrus.Logger, version string) *Agent {
 	svcConf := &service.Config{
 		Executable:  exe,
 		Name:        winSvcName,
-		DisplayName: "TacticalRMM Agent Service",
+		DisplayName: "QDT RMM Agent Service",
 		Arguments:   []string{"-m", "svc"},
-		Description: "TacticalRMM Agent Service",
+		Description: "QDT RMM Agent Service",
 		Option: service.KeyValue{
 			"StartType":              "automatic",
 			"OnFailure":              "restart",
@@ -247,24 +247,7 @@ func New(logger *logrus.Logger, version string) *Agent {
 		},
 	}
 
-	var natsProxyPath, natsProxyPort string
-	if ac.NatsProxyPath == "" {
-		natsProxyPath = "natsws"
-	}
-
-	if ac.NatsProxyPort == "" {
-		natsProxyPort = "443"
-	}
-
-	// check if using nats standard tcp, otherwise use nats websockets by default
-	var natsServer string
-	var natsWsCompression bool
-	if ac.NatsStandardPort != "" {
-		natsServer = fmt.Sprintf("tls://%s:%s", ac.APIURL, ac.NatsStandardPort)
-	} else {
-		natsServer = fmt.Sprintf("wss://%s:%s", ac.APIURL, natsProxyPort)
-		natsWsCompression = true
-	}
+	natsServer, natsProxyPath, natsProxyPort, natsWsCompression := natsEndpoint(ac.BaseURL, ac.APIURL, ac.NatsProxyPath, ac.NatsProxyPort, ac.NatsStandardPort)
 
 	var natsPingInterval int
 	if ac.NatsPingInterval == 0 {
@@ -345,6 +328,13 @@ func (a *Agent) NewCMDOpts() *CmdOptions {
 }
 
 func (a *Agent) CmdV2(c *CmdOptions) CmdStatus {
+	if err := validateCommandPayload(c.Command, c.Args, c.EnvVars); err != nil {
+		return CmdStatus{
+			Status: gocmd.Status{Exit: 65, Error: err},
+			Stderr: err.Error(),
+		}
+	}
+	c.Timeout = time.Duration(clampCommandTimeoutSeconds(int(c.Timeout)))
 
 	ctx, cancel := context.WithTimeout(context.Background(), c.Timeout*time.Second)
 	defer cancel()
@@ -380,8 +370,8 @@ func (a *Agent) CmdV2(c *CmdOptions) CmdStatus {
 		envCmd = gocmd.NewCmdOptions(cmdOptions, commandArray[0], commandArray[1:]...) // /bin/bash -c 'ls -l /var/log/...'
 	}
 
-	var stdoutBuf bytes.Buffer
-	var stderrBuf bytes.Buffer
+	stdoutBuf := newCappedBuffer(maxCommandOutputBytes)
+	stderrBuf := newCappedBuffer(maxCommandOutputBytes)
 	// Print STDOUT and STDERR lines streaming from Cmd
 	doneChan := make(chan struct{})
 	go func() {
@@ -395,7 +385,7 @@ func (a *Agent) CmdV2(c *CmdOptions) CmdStatus {
 					envCmd.Stdout = nil
 					continue
 				}
-				fmt.Fprintln(&stdoutBuf, line)
+				fmt.Fprintln(stdoutBuf, line)
 				a.Logger.Debugln(line)
 				if c.Stream {
 					streamLineToNats(line, a.AgentID, c.CmdID, c.Nc)
@@ -406,7 +396,7 @@ func (a *Agent) CmdV2(c *CmdOptions) CmdStatus {
 					envCmd.Stderr = nil
 					continue
 				}
-				fmt.Fprintln(&stderrBuf, line)
+				fmt.Fprintln(stderrBuf, line)
 				a.Logger.Debugln(line)
 				if c.Stream {
 					streamLineToNats(line, a.AgentID, c.CmdID, c.Nc)
@@ -625,6 +615,7 @@ func (a *Agent) setupNatsOptions() []nats.Option {
 		a.Logger.Errorf("%+v\n", sub)
 	}))
 	if a.Insecure {
+		a.Logger.Warnln("TLS certificate verification disabled for NATS")
 		insecureConf := &tls.Config{
 			InsecureSkipVerify: true,
 		}
@@ -683,6 +674,11 @@ func (a *Agent) CleanupAgentUpdates() {
 }
 
 func (a *Agent) RunPythonCode(code string, timeout int, args []string) (string, error) {
+	if err := validateScriptPayload(code, args, nil); err != nil {
+		return "", err
+	}
+	timeout = clampCommandTimeoutSeconds(timeout)
+
 	content := []byte(code)
 	tmpfn, _ := os.CreateTemp(a.WinTmpDir, "*.py")
 	if _, err := tmpfn.Write(content); err != nil {
@@ -698,15 +694,16 @@ func (a *Agent) RunPythonCode(code string, timeout int, args []string) (string, 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeout)*time.Second)
 	defer cancel()
 
-	var outb, errb bytes.Buffer
+	outb := newCappedBuffer(maxCommandOutputBytes)
+	errb := newCappedBuffer(maxCommandOutputBytes)
 	cmdArgs := []string{tmpfn.Name()}
 	if len(args) > 0 {
 		cmdArgs = append(cmdArgs, args...)
 	}
 	a.Logger.Debugln(cmdArgs)
 	cmd := exec.CommandContext(ctx, a.PyBin, cmdArgs...)
-	cmd.Stdout = &outb
-	cmd.Stderr = &errb
+	cmd.Stdout = outb
+	cmd.Stderr = errb
 
 	cmdErr := cmd.Run()
 
@@ -928,6 +925,20 @@ func (a *Agent) applyPendingTerminalResize(sessionID string) {
 
 func (a *Agent) StartTerminalSession(sessionID, shell string, nc *nats.Conn) error {
 	a.Logger.Debugf("StartTerminalSession: session=%s shell=%s", sessionID, shell)
+	if sessionID == "" {
+		return fmt.Errorf("missing session_id")
+	}
+
+	a.TerminalSessionsMu.Lock()
+	if _, exists := a.TerminalSessions[sessionID]; exists {
+		a.TerminalSessionsMu.Unlock()
+		return fmt.Errorf("session already exists: %s", sessionID)
+	}
+	if terminalSessionLimitReached(len(a.TerminalSessions)) {
+		a.TerminalSessionsMu.Unlock()
+		return fmt.Errorf("terminal session limit reached: %d", maxTerminalSessions)
+	}
+	a.TerminalSessionsMu.Unlock()
 
 	cmd := exec.Command(shell)
 	env := os.Environ()
@@ -953,7 +964,14 @@ func (a *Agent) StartTerminalSession(sessionID, shell string, nc *nats.Conn) err
 		}
 		return fmt.Errorf("session already exists: %s", sessionID)
 	}
-
+	if terminalSessionLimitReached(len(a.TerminalSessions)) {
+		a.TerminalSessionsMu.Unlock()
+		_ = ptmx.Close()
+		if cmd.Process != nil {
+			_ = cmd.Process.Kill()
+		}
+		return fmt.Errorf("terminal session limit reached: %d", maxTerminalSessions)
+	}
 	a.TerminalSessions[sessionID] = &TerminalSession{
 		ID:   sessionID,
 		Cmd:  cmd,

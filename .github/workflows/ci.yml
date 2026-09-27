@@ -20,6 +20,9 @@ jobs:
         with:
           go-version: '1.20.13'
 
+      - name: Run tests
+        run: go test ./...
+
       - name: Ensure linux agent compiles
         run: |
           ARCHS='amd64 386 arm64 arm'

@@ -12,11 +12,14 @@ https://license.tacticalrmm.com
 package agent
 
 import (
+	"crypto/sha256"
 	"crypto/tls"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"runtime"
@@ -54,6 +57,17 @@ type Installer struct {
 }
 
 func (a *Agent) Install(i *Installer) {
+	if runtime.GOOS == "linux" {
+		if _, err := os.Stat(etcConfig); err == nil {
+			a.installerMsg("Existing agent configuration found; remove the existing installation before reinstalling.", "error", i.Silent)
+		}
+		if _, err := exec.LookPath("systemctl"); err != nil {
+			a.installerMsg("Linux installation requires systemd.", "error", i.Silent)
+		}
+		if _, err := os.Stat("/run/systemd/system"); err != nil {
+			a.installerMsg("Linux installation requires a running systemd instance.", "error", i.Silent)
+		}
+	}
 	a.checkExistingAndRemove(i.Silent)
 
 	i.Headers = map[string]string{
@@ -92,7 +106,7 @@ func (a *Agent) Install(i *Installer) {
 	iClient := resty.New()
 	iClient.SetCloseConnection(true)
 	iClient.SetTimeout(15 * time.Second)
-	iClient.SetDebug(a.Debug)
+	iClient.SetDebug(false)
 	iClient.SetHeaders(i.Headers)
 
 	// set proxy if applicable
@@ -106,6 +120,7 @@ func (a *Agent) Install(i *Installer) {
 	}
 
 	if i.Insecure {
+		a.Logger.Warnln("TLS certificate verification disabled for installer API client")
 		iClient.SetTLSClientConfig(insecureConf)
 	}
 
@@ -126,10 +141,22 @@ func (a *Agent) Install(i *Installer) {
 		a.installerMsg(DjangoStringResp(iVersion.String()), "error", i.Silent)
 	}
 
+	destination := nixAgentBin
+	if runtime.GOOS == "windows" {
+		destination = filepath.Join(a.ProgramDir, winExeName)
+	}
+	self, err := os.Executable()
+	if err != nil {
+		a.installerMsg(err.Error(), "error", i.Silent)
+	}
+	if err := installExecutable(self, destination); err != nil {
+		a.installerMsg(err.Error(), "error", i.Silent)
+	}
+
 	rClient := resty.New()
 	rClient.SetCloseConnection(true)
 	rClient.SetTimeout(i.Timeout * time.Second)
-	rClient.SetDebug(a.Debug)
+	rClient.SetDebug(false)
 	// set rest knox headers
 	rClient.SetHeaders(i.Headers)
 
@@ -146,6 +173,7 @@ func (a *Agent) Install(i *Installer) {
 	}
 
 	if i.Insecure {
+		a.Logger.Warnln("TLS certificate verification disabled for installer runtime API client")
 		rClient.SetTLSClientConfig(insecureConf)
 	}
 
@@ -243,14 +271,12 @@ func (a *Agent) Install(i *Installer) {
 	agentPK := r.Result().(*NewAgentResp).AgentPK
 	agentToken := r.Result().(*NewAgentResp).Token
 
-	a.Logger.Debugln("Agent token:", agentToken)
 	a.Logger.Debugln("Agent PK:", agentPK)
 
 	createAgentConfig(baseURL, a.AgentID, i.SaltMaster, agentToken, strconv.Itoa(agentPK), i.Cert, i.Proxy, i.MeshDir, i.NatsStandardPort, i.Insecure, i.TmpDir)
 	time.Sleep(1 * time.Second)
 	// refresh our agent with new values
 	a = New(a.Logger, a.Version)
-	a.Logger.Debugf("%+v\n", a)
 
 	// set new headers, no longer knox auth...use agent auth
 	rClient.SetHeaders(a.Headers)
@@ -261,14 +287,21 @@ func (a *Agent) Install(i *Installer) {
 
 	if runtime.GOOS == "linux" {
 		// Used for Nushell and Deno binaries
-		os.MkdirAll(nixAgentBinDir, 0755)
+		if err := os.MkdirAll(nixAgentBinDir, 0755); err != nil {
+			a.installerMsg(err.Error(), "error", i.Silent)
+		}
+		if err := os.WriteFile("/etc/systemd/system/tacticalagent.service", []byte(linuxAgentUnit), 0644); err != nil {
+			a.installerMsg(err.Error(), "error", i.Silent)
+		}
+		for _, args := range [][]string{{"daemon-reload"}, {"enable", "--now", "tacticalagent.service"}} {
+			if output, err := exec.Command("systemctl", args...).CombinedOutput(); err != nil {
+				a.installerMsg(fmt.Sprintf("systemctl: %v: %s", err, output), "error", i.Silent)
+			}
+		}
 	}
 
 	if runtime.GOOS == "darwin" {
 		os.MkdirAll(nixAgentBinDir, 0755)
-		self, _ := os.Executable()
-		copyFile(self, nixAgentBin)
-		os.Chmod(nixAgentBin, 0755)
 		svc := fmt.Sprintf(`
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple Computer//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -278,7 +311,7 @@ func (a *Agent) Install(i *Installer) {
 		<string>%s</string>
 
 		<key>ServiceDescription</key>
-        <string>TacticalAgent Service</string>
+        <string>QDT RMM Agent Service</string>
 
 		<key>ProgramArguments</key>
 		<array>
@@ -307,9 +340,6 @@ func (a *Agent) Install(i *Installer) {
 
 	if runtime.GOOS == "freebsd" {
 		os.MkdirAll(nixAgentBinDir, 0755)
-		self, _ := os.Executable()
-		copyFile(self, nixAgentBin)
-		os.Chmod(nixAgentBin, 0755)
 
 		// uses the base-system daemon(8) tool to background the agent,
 		// track its pid, and restart it if it exits (-r)
@@ -358,6 +388,7 @@ run_rc_command "$1"
 		a.PatchMgmnt(true)
 
 		a.Logger.Infoln("Installing service...")
+		a.ServiceConfig.Executable = filepath.Join(a.ProgramDir, winExeName)
 		err = a.InstallService()
 		if err != nil {
 			a.installerMsg(err.Error(), "error", i.Silent)
@@ -405,6 +436,128 @@ func copyFile(src, dst string) error {
 	_, err = io.Copy(out, in)
 	if err != nil {
 		return err
+	}
+	return nil
+}
+
+const linuxAgentUnit = `[Unit]
+Description=QDT RMM Agent
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/opt/tacticalagent/tacticalagent -m svc
+WorkingDirectory=/opt/tacticalagent
+User=root
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
+`
+
+// Downloaded executables must survive removal of the temporary installer directory.
+func installExecutable(source, destination string) error {
+	src, err := os.Stat(source)
+	if err != nil {
+		return err
+	}
+	if dst, err := os.Stat(destination); err == nil && os.SameFile(src, dst) {
+		return nil
+	}
+	if err := os.MkdirAll(filepath.Dir(destination), 0755); err != nil {
+		return err
+	}
+	in, err := os.Open(source)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+	out, err := os.CreateTemp(filepath.Dir(destination), ".qdt-agent-*")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(out.Name())
+	if _, err := io.Copy(out, in); err != nil {
+		out.Close()
+		return err
+	}
+	if err := out.Chmod(0755); err != nil {
+		out.Close()
+		return err
+	}
+	if err := out.Sync(); err != nil {
+		out.Close()
+		return err
+	}
+	if err := out.Close(); err != nil {
+		return err
+	}
+	return os.Rename(out.Name(), destination)
+}
+
+func downloadFileAtomic(client *resty.Client, url, destination string) error {
+	if err := os.MkdirAll(filepath.Dir(destination), 0755); err != nil {
+		return fmt.Errorf("create download dir: %w", err)
+	}
+	tmp, err := os.CreateTemp(filepath.Dir(destination), ".download-*")
+	if err != nil {
+		return fmt.Errorf("create temp download: %w", err)
+	}
+	tmpName := tmp.Name()
+	if err := tmp.Close(); err != nil {
+		_ = os.Remove(tmpName)
+		return fmt.Errorf("close temp download: %w", err)
+	}
+	defer os.Remove(tmpName)
+
+	resp, err := client.R().SetOutput(tmpName).Get(url)
+	if err != nil {
+		return fmt.Errorf("download %s: %w", url, err)
+	}
+	if resp.IsError() {
+		return fmt.Errorf("download %s: status %d", url, resp.StatusCode())
+	}
+	if err := os.Rename(tmpName, destination); err != nil {
+		return fmt.Errorf("install downloaded file: %w", err)
+	}
+	return nil
+}
+
+func verifySHA256(path, expected string) error {
+	expected = strings.TrimSpace(strings.ToLower(expected))
+	if expected == "" {
+		return nil
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		return fmt.Errorf("open file for sha256: %w", err)
+	}
+	defer f.Close()
+
+	h := sha256.New()
+	if _, err := io.Copy(h, f); err != nil {
+		return fmt.Errorf("hash file: %w", err)
+	}
+	got := hex.EncodeToString(h.Sum(nil))
+	if got != expected {
+		return fmt.Errorf("sha256 mismatch: got %s want %s", got, expected)
+	}
+	return nil
+}
+
+func replaceFileWithBackup(source, destination string) error {
+	backup := destination + ".bak"
+	_ = os.Remove(backup)
+	if err := os.Rename(destination, backup); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("backup existing file: %w", err)
+	}
+	if err := os.Rename(source, destination); err != nil {
+		if _, statErr := os.Stat(backup); statErr == nil {
+			_ = os.Rename(backup, destination)
+		}
+		return fmt.Errorf("replace file: %w", err)
 	}
 	return nil
 }

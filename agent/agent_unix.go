@@ -28,7 +28,7 @@ import (
 	"syscall"
 	"time"
 
-	rmm "github.com/amidaware/rmmagent/shared"
+	rmm "github.com/Janqu/qdt-rmm-go/shared"
 	ps "github.com/elastic/go-sysinfo"
 	"github.com/go-resty/resty/v2"
 	"github.com/jaypipes/ghw"
@@ -174,6 +174,11 @@ func NewAgentConfig() *rmm.AgentConfig {
 }
 
 func (a *Agent) RunScript(code string, shell string, args []string, timeout int, runasuser bool, envVars []string, nushellEnableConfig bool, denoDefaultPermissions string) (stdout, stderr string, exitcode int, e error) {
+	if err := validateScriptPayload(code, args, envVars); err != nil {
+		return "", err.Error(), 65, err
+	}
+	timeout = clampCommandTimeoutSeconds(timeout)
+
 	code = removeWinNewLines(code)
 	content := []byte(code)
 
@@ -293,7 +298,7 @@ func (a *Agent) seEnforcing() bool {
 	return out.Status.Exit == 0 && strings.Contains(out.Stdout, "Enforcing")
 }
 
-func (a *Agent) AgentUpdate(url, inno, version string) error {
+func (a *Agent) AgentUpdate(url, inno, version, sha256sum string) error {
 
 	self, err := os.Executable()
 	if err != nil {
@@ -303,14 +308,8 @@ func (a *Agent) AgentUpdate(url, inno, version string) error {
 
 	// more reliable method to get current working directory than os.Getwd()
 	cwd := filepath.Dir(self)
-	// create a tmpfile in same location as current binary
-	// avoids issues with /tmp dir and other fs mount issues
-	f, err := os.CreateTemp(cwd, "trmm")
-	if err != nil {
-		a.Logger.Errorln("AgentUpdate() os.CreateTemp:", err)
-		return err
-	}
-	defer os.Remove(f.Name())
+	updatePath := filepath.Join(cwd, ".tacticalagent-update")
+	defer os.Remove(updatePath)
 
 	a.Logger.Infof("Agent updating from %s to %s", a.Version, version)
 	a.Logger.Debugln("Downloading agent update from", url)
@@ -323,29 +322,26 @@ func (a *Agent) AgentUpdate(url, inno, version string) error {
 		rClient.SetProxy(a.Proxy)
 	}
 	if a.Insecure {
+		a.Logger.Warnln("TLS certificate verification disabled for agent update")
 		insecureConf := &tls.Config{
 			InsecureSkipVerify: true,
 		}
 		rClient.SetTLSClientConfig(insecureConf)
 	}
 
-	r, err := rClient.R().SetOutput(f.Name()).Get(url)
-	if err != nil {
+	if err := downloadFileAtomic(rClient, url, updatePath); err != nil {
 		a.Logger.Errorln("AgentUpdate() download:", err)
-		f.Close()
 		return err
 	}
-	if r.IsError() {
-		a.Logger.Errorln("AgentUpdate() status code:", r.StatusCode())
-		f.Close()
-		return errors.New("err")
+	if err := verifySHA256(updatePath, sha256sum); err != nil {
+		a.Logger.Errorln("AgentUpdate() sha256:", err)
+		return err
 	}
-
-	f.Close()
-	os.Chmod(f.Name(), 0755)
-	err = os.Rename(f.Name(), self)
-	if err != nil {
-		a.Logger.Errorln("AgentUpdate() os.Rename():", err)
+	if err := os.Chmod(updatePath, 0755); err != nil {
+		return fmt.Errorf("chmod agent update: %w", err)
+	}
+	if err := replaceFileWithBackup(updatePath, self); err != nil {
+		a.Logger.Errorln("AgentUpdate() replace:", err)
 		return err
 	}
 

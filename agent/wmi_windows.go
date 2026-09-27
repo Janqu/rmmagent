@@ -14,8 +14,8 @@ package agent
 import (
 	"encoding/json"
 
+	rmm "github.com/Janqu/qdt-rmm-go/shared"
 	"github.com/StackExchange/wmi"
-	rmm "github.com/amidaware/rmmagent/shared"
 )
 
 func GetWin32_USBController() ([]interface{}, error) {

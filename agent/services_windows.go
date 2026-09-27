@@ -14,7 +14,7 @@ package agent
 import (
 	"time"
 
-	rmm "github.com/amidaware/rmmagent/shared"
+	rmm "github.com/Janqu/qdt-rmm-go/shared"
 	trmm "github.com/wh1te909/trmm-shared"
 	"golang.org/x/sys/windows/svc"
 	"golang.org/x/sys/windows/svc/mgr"

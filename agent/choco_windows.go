@@ -17,7 +17,7 @@ import (
 	"path/filepath"
 	"time"
 
-	rmm "github.com/amidaware/rmmagent/shared"
+	rmm "github.com/Janqu/qdt-rmm-go/shared"
 	"github.com/go-resty/resty/v2"
 )
 

@@ -31,7 +31,7 @@ import (
 	"fmt"
 	"sync"
 
-	rmm "github.com/amidaware/rmmagent/shared"
+	rmm "github.com/Janqu/qdt-rmm-go/shared"
 	ole "github.com/go-ole/go-ole"
 	"github.com/go-ole/go-ole/oleutil"
 )

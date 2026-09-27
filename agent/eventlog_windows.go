@@ -19,7 +19,7 @@ import (
 	"unicode/utf16"
 	"unsafe"
 
-	rmm "github.com/amidaware/rmmagent/shared"
+	rmm "github.com/Janqu/qdt-rmm-go/shared"
 	"github.com/gonutz/w32/v2"
 	"golang.org/x/sys/windows"
 	"golang.org/x/sys/windows/registry"

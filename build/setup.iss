@@ -1,7 +1,7 @@
-#define MyAppName "Tactical RMM Agent"
+#define MyAppName "QDT RMM"
 #define MyAppVersion "2.11.0"
-#define MyAppPublisher "AmidaWare Inc"
-#define MyAppURL "https://tacticalrmm.com"
+#define MyAppPublisher "QDT"
+#define MyAppURL "https://q-dt.de"
 #define MyAppExeName "tacticalrmm.exe"
 #define MESHEXE "meshagent.exe"
 #define MESHDIR "{sd}\Program Files\Mesh Agent"
@@ -30,7 +30,7 @@ CloseApplications=no
 MinVersion=6.1
 VersionInfoVersion=2.11.0.0
 VersionInfoOriginalFileName=tacticalrmm.exe
-AppCopyright="Copyright (C) 2026 {#MyAppPublisher}"
+AppCopyright="Copyright (C) 2026 AmidaWare Inc; QDT branding"
 
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"

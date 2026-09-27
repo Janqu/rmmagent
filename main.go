@@ -19,7 +19,7 @@ import (
 	"path/filepath"
 	"runtime"
 
-	"github.com/amidaware/rmmagent/agent"
+	"github.com/Janqu/qdt-rmm-go/agent"
 	"github.com/kardianos/service"
 	"github.com/sirupsen/logrus"
 )
@@ -74,15 +74,15 @@ func main() {
 	}
 
 	setupLogging(logLevel, logTo)
-	defer logFile.Close()
+	if logFile != nil {
+		defer logFile.Close()
+	}
 
 	a := *agent.New(log, version)
 
 	if *mode == "install" {
 		a.Logger.SetOutput(os.Stdout)
 	}
-
-	a.Logger.Debugf("%+v\n", a)
 
 	switch *mode {
 	case "getenv":
@@ -182,13 +182,21 @@ func setupLogging(level, to *string) {
 	log.SetLevel(ll)
 
 	if *to == "stdout" {
+		logFile = nil
 		log.SetOutput(os.Stdout)
 	} else {
+		var err error
 		switch runtime.GOOS {
 		case "windows":
-			logFile, _ = os.OpenFile(filepath.Join(os.Getenv("ProgramFiles"), "TacticalAgent", "agent.log"), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0664)
+			logFile, err = os.OpenFile(filepath.Join(os.Getenv("ProgramFiles"), "TacticalAgent", "agent.log"), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0664)
 		default:
-			logFile, _ = os.OpenFile(filepath.Join("/var/log/", "tacticalagent.log"), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0664)
+			logFile, err = os.OpenFile(filepath.Join("/var/log/", "tacticalagent.log"), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0664)
+		}
+		if err != nil {
+			logFile = nil
+			log.SetOutput(os.Stderr)
+			log.Warnf("unable to open log file, logging to stderr: %v", err)
+			return
 		}
 		log.SetOutput(logFile)
 	}

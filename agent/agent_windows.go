@@ -13,7 +13,6 @@ package agent
 
 import (
 	"bufio"
-	"bytes"
 	"context"
 	"crypto/tls"
 	"errors"
@@ -30,7 +29,7 @@ import (
 	"time"
 	"unsafe"
 
-	rmm "github.com/amidaware/rmmagent/shared"
+	rmm "github.com/Janqu/qdt-rmm-go/shared"
 	ps "github.com/elastic/go-sysinfo"
 	"github.com/fourcorelabs/wintoken"
 	"github.com/go-ole/go-ole"
@@ -96,6 +95,10 @@ func NewAgentConfig() *rmm.AgentConfig {
 }
 
 func (a *Agent) RunScript(code string, shell string, args []string, timeout int, runasuser bool, envVars []string, nushellEnableConfig bool, denoDefaultPermissions string) (stdout, stderr string, exitcode int, e error) {
+	if err := validateScriptPayload(code, args, envVars); err != nil {
+		return "", err.Error(), 65, err
+	}
+	timeout = clampCommandTimeoutSeconds(timeout)
 
 	content := []byte(code)
 
@@ -108,8 +111,8 @@ func (a *Agent) RunScript(code string, shell string, args []string, timeout int,
 	const defaultExitCode = 1
 
 	var (
-		outb    bytes.Buffer
-		errb    bytes.Buffer
+		outb    = newCappedBuffer(maxCommandOutputBytes)
+		errb    = newCappedBuffer(maxCommandOutputBytes)
 		exe     string
 		ext     string
 		cmdArgs []string
@@ -247,8 +250,8 @@ func (a *Agent) RunScript(code string, shell string, args []string, timeout int,
 	if usingEnvVars {
 		cmd.Env = append(cmd.Env, envVars...)
 	}
-	cmd.Stdout = &outb
-	cmd.Stderr = &errb
+	cmd.Stdout = outb
+	cmd.Stderr = errb
 
 	if cmdErr := cmd.Start(); cmdErr != nil {
 		a.Logger.Debugln(cmdErr)
@@ -308,18 +311,24 @@ func SetDetached() *syscall.SysProcAttr {
 }
 
 func CMD(exe string, args []string, timeout int, detached bool) (output [2]string, e error) {
+	if err := validateCommandPayload(exe, args, nil); err != nil {
+		return [2]string{"", CleanString(err.Error())}, err
+	}
+	timeout = clampCommandTimeoutSeconds(timeout)
+
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeout)*time.Second)
 	defer cancel()
 
-	var outb, errb bytes.Buffer
+	outb := newCappedBuffer(maxCommandOutputBytes)
+	errb := newCappedBuffer(maxCommandOutputBytes)
 	cmd := exec.CommandContext(ctx, exe, args...)
 	if detached {
 		cmd.SysProcAttr = &windows.SysProcAttr{
 			CreationFlags: windows.DETACHED_PROCESS | windows.CREATE_NEW_PROCESS_GROUP,
 		}
 	}
-	cmd.Stdout = &outb
-	cmd.Stderr = &errb
+	cmd.Stdout = outb
+	cmd.Stderr = errb
 	err := cmd.Run()
 	if err != nil {
 		return [2]string{"", ""}, fmt.Errorf("%s: %s", err, CleanString(errb.String()))
@@ -333,9 +342,14 @@ func CMD(exe string, args []string, timeout int, detached bool) (output [2]strin
 }
 
 func CMDShell(shell string, cmdArgs []string, command string, timeout int, detached bool, runasuser bool, stream bool, agentID *string, cmdID *string, nc *nats.Conn) (output [2]string, e error) {
+	if err := validateCommandPayload(command, cmdArgs, nil); err != nil {
+		return [2]string{"", CleanString(err.Error())}, err
+	}
+	timeout = clampCommandTimeoutSeconds(timeout)
+
 	var (
-		outb         bytes.Buffer
-		errb         bytes.Buffer
+		outb         = newCappedBuffer(maxCommandOutputBytes)
+		errb         = newCappedBuffer(maxCommandOutputBytes)
 		cmd          *exec.Cmd
 		timedOut     = false
 		stdoutWriter io.Closer
@@ -348,6 +362,9 @@ func CMDShell(shell string, cmdArgs []string, command string, timeout int, detac
 	sysProcAttr := &windows.SysProcAttr{}
 	cmdExe := getCMDExe()
 	powershell := getPowershellExe()
+	if shell == "" {
+		shell = "cmd"
+	}
 
 	if len(cmdArgs) > 0 && command == "" {
 		switch shell {
@@ -357,6 +374,9 @@ func CMDShell(shell string, cmdArgs []string, command string, timeout int, detac
 		case "powershell":
 			cmdArgs = append([]string{"-NonInteractive", "-NoProfile"}, cmdArgs...)
 			cmd = exec.Command(powershell, cmdArgs...)
+		default:
+			err := fmt.Errorf("unsupported shell: %s", shell)
+			return [2]string{"", CleanString(err.Error())}, err
 		}
 	} else {
 		switch shell {
@@ -365,6 +385,9 @@ func CMDShell(shell string, cmdArgs []string, command string, timeout int, detac
 			sysProcAttr.CmdLine = fmt.Sprintf("%s /C %s", cmdExe, command)
 		case "powershell":
 			cmd = exec.Command(powershell, "-NonInteractive", "-NoProfile", command)
+		default:
+			err := fmt.Errorf("unsupported shell: %s", shell)
+			return [2]string{"", CleanString(err.Error())}, err
 		}
 	}
 
@@ -391,14 +414,14 @@ func CMDShell(shell string, cmdArgs []string, command string, timeout int, detac
 		stdoutWriter = sw
 		stderrWriter = ew
 
-		cmd.Stdout = io.MultiWriter(&outb, sw)
-		cmd.Stderr = io.MultiWriter(&errb, ew)
+		cmd.Stdout = io.MultiWriter(outb, sw)
+		cmd.Stderr = io.MultiWriter(errb, ew)
 
 		go streamLines(stdoutReader, *agentID, *cmdID, nc)
 		go streamLines(stderrReader, *agentID, *cmdID, nc)
 	} else {
-		cmd.Stdout = &outb
-		cmd.Stderr = &errb
+		cmd.Stdout = outb
+		cmd.Stderr = errb
 	}
 	if err := cmd.Start(); err != nil {
 		// If streaming, close the writers to unblock the goroutines
@@ -561,10 +584,10 @@ func ShowStatus(version string) {
 		}
 		var handle w32.HWND
 		msg := fmt.Sprintf("Agent: %s\n\nMesh Agent: %s", statusMap[winSvcName], statusMap[meshSvcName])
-		w32.MessageBox(handle, msg, fmt.Sprintf("Tactical RMM v%s", version), w32.MB_OK|w32.MB_ICONINFORMATION)
+		w32.MessageBox(handle, msg, fmt.Sprintf("QDT RMM v%s", version), w32.MB_OK|w32.MB_ICONINFORMATION)
 	} else {
-		fmt.Println("Tactical RMM Version", version)
-		fmt.Println("Tactical Agent:", statusMap[winSvcName])
+		fmt.Println("QDT RMM Version", version)
+		fmt.Println("QDT RMM Agent:", statusMap[winSvcName])
 		fmt.Println("Mesh Agent:", statusMap[meshSvcName])
 	}
 }
@@ -729,7 +752,7 @@ func (a *Agent) UninstallCleanup() {
 	os.RemoveAll(a.WinRunAsUserTmpDir)
 }
 
-func (a *Agent) AgentUpdate(url, inno, version string) error {
+func (a *Agent) AgentUpdate(url, inno, version, sha256sum string) error {
 	time.Sleep(time.Duration(randRange(1, 15)) * time.Second)
 	a.KillHungUpdates()
 	time.Sleep(1 * time.Second)
@@ -746,20 +769,22 @@ func (a *Agent) AgentUpdate(url, inno, version string) error {
 		rClient.SetProxy(a.Proxy)
 	}
 	if a.Insecure {
+		a.Logger.Warnln("TLS certificate verification disabled for agent update")
 		insecureConf := &tls.Config{
 			InsecureSkipVerify: true,
 		}
 		rClient.SetTLSClientConfig(insecureConf)
 	}
-	r, err := rClient.R().SetOutput(updater).Get(url)
-	if err != nil {
+	if err := os.MkdirAll(a.WinTmpDir, 0755); err != nil {
+		return fmt.Errorf("create update temp dir: %w", err)
+	}
+	if err := downloadFileAtomic(rClient, url, updater); err != nil {
 		a.Logger.Errorln(err)
 		return err
 	}
-	if r.IsError() {
-		ret := fmt.Sprintf("Download failed with status code %d", r.StatusCode())
-		a.Logger.Errorln(ret)
-		return errors.New(ret)
+	if err := verifySHA256(updater, sha256sum); err != nil {
+		a.Logger.Errorln(err)
+		return err
 	}
 
 	innoLogFile := filepath.Join(a.WinTmpDir, fmt.Sprintf("tacticalagent_update_v%s.txt", version))
@@ -769,7 +794,9 @@ func (a *Agent) AgentUpdate(url, inno, version string) error {
 	cmd.SysProcAttr = &windows.SysProcAttr{
 		CreationFlags: windows.DETACHED_PROCESS | windows.CREATE_NEW_PROCESS_GROUP,
 	}
-	cmd.Start()
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("start agent updater: %w", err)
+	}
 	time.Sleep(1 * time.Second)
 	return nil
 }

@@ -31,6 +31,10 @@ func startTerminalSessionWinPTY(agentID, programDir, sessionID, shell string, ru
 		winTermMu.Unlock()
 		return fmt.Errorf("session already exists: %s", sessionID)
 	}
+	if terminalSessionLimitReached(len(winTerms)) {
+		winTermMu.Unlock()
+		return fmt.Errorf("terminal session limit reached: %d", maxTerminalSessions)
+	}
 	winTermMu.Unlock()
 
 	if runAsUser {

@@ -21,7 +21,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	rmm "github.com/amidaware/rmmagent/shared"
+	rmm "github.com/Janqu/qdt-rmm-go/shared"
 	nats "github.com/nats-io/nats.go"
 	"github.com/ugorji/go/codec"
 )
@@ -59,8 +59,6 @@ func (a *Agent) RunRPC() {
 
 	opts := a.setupNatsOptions()
 	nc, err := nats.Connect(a.NatsServer, opts...)
-	a.Logger.Debugf("%+v\n", nc)
-	a.Logger.Debugf("%+v\n", nc.Opts)
 	if err != nil {
 		a.Logger.Fatalln("RunRPC() nats.Connect()", err)
 	}
@@ -786,6 +784,18 @@ func (a *Agent) RunRPC() {
 			go func(p *NatsMsg) {
 				var resp []byte
 				ret := codec.NewEncoderBytes(&resp, new(codec.MsgpackHandle))
+				updateURL := strings.TrimSpace(p.Data["url"])
+				updateVersion := strings.TrimSpace(p.Data["version"])
+				if updateURL == "" || updateVersion == "" {
+					ret.Encode("missing-update-data")
+					msg.Respond(resp)
+					return
+				}
+				if updateVersion == a.Version {
+					ret.Encode("already-current")
+					msg.Respond(resp)
+					return
+				}
 				if !atomic.CompareAndSwapUint32(&agentUpdateLocker, 0, 1) {
 					a.Logger.Debugln("Agent update already running")
 					ret.Encode("updaterunning")
@@ -793,7 +803,7 @@ func (a *Agent) RunRPC() {
 				} else {
 					ret.Encode("ok")
 					msg.Respond(resp)
-					err := a.AgentUpdate(p.Data["url"], p.Data["inno"], p.Data["version"])
+					err := a.AgentUpdate(updateURL, p.Data["inno"], updateVersion, p.Data["sha256"])
 					if err != nil {
 						atomic.StoreUint32(&agentUpdateLocker, 0)
 						return

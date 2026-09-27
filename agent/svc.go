@@ -176,8 +176,8 @@ func (a *Agent) GetCheckInConfFromAPI() AgentCheckInConfig {
 	ret := AgentCheckInConfig{}
 	url := fmt.Sprintf("/api/v3/%s/config/", a.AgentID)
 	r, err := a.rClient.R().SetResult(&AgentCheckInConfig{}).Get(url)
-	if err != nil {
-		a.Logger.Debugln("GetAgentCheckInConfig()", err)
+	if err != nil || r.StatusCode() != 200 {
+		a.Logger.Debugln("GetAgentCheckInConfig() failed; using defaults", err)
 		ret.Hello = randRange(30, 60)
 		ret.AgentInfo = randRange(200, 400)
 		ret.WinSvc = randRange(2400, 3000)

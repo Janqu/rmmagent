@@ -110,7 +110,7 @@ func (a *Agent) checkExistingAndRemove(silent bool) {
 		if !silent && window != 0 {
 			var handle w32.HWND
 			msg := "Existing installation found\nClick OK to remove, then re-run the installer.\nClick Cancel to abort."
-			action := w32.MessageBox(handle, msg, "Tactical RMM", w32.MB_OKCANCEL|w32.MB_ICONWARNING)
+			action := w32.MessageBox(handle, msg, "QDT RMM", w32.MB_OKCANCEL|w32.MB_ICONWARNING)
 			if action == w32.IDOK {
 				a.AgentUninstall("foo")
 			}
@@ -140,7 +140,7 @@ func (a *Agent) installerMsg(msg, alert string, silent bool) {
 			flags = w32.MB_OK | w32.MB_ICONINFORMATION
 		}
 
-		w32.MessageBox(handle, msg, "Tactical RMM", flags)
+		w32.MessageBox(handle, msg, "QDT RMM", flags)
 	} else {
 		fmt.Println(msg)
 	}

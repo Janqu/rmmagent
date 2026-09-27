@@ -49,7 +49,7 @@ func createAgentConfig(baseurl, agentid, apiurl, token, agentpk, cert, proxy, me
 	if insecure {
 		viper.Set("insecure", "true")
 	}
-	viper.SetConfigPermissions(0660)
+	viper.SetConfigPermissions(0600)
 	err := viper.SafeWriteConfigAs(etcConfig)
 	if err != nil {
 		log.Fatalln("createAgentConfig", err)

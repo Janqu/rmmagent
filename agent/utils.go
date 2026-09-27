@@ -42,6 +42,102 @@ type PingResponse struct {
 	Output string
 }
 
+const (
+	defaultCommandTimeoutSeconds = 60
+	maxCommandTimeoutSeconds     = 3600
+	maxCommandOutputBytes        = 1 << 20
+	maxScriptBytes               = 1 << 20
+	maxCommandBytes              = 64 << 10
+	maxExecArgs                  = 128
+	maxExecArgBytes              = 8 << 10
+	maxExecEnvVars               = 128
+	maxExecEnvVarBytes           = 8 << 10
+	maxTerminalSessions          = 4
+)
+
+type cappedBuffer struct {
+	buf       bytes.Buffer
+	limit     int
+	truncated bool
+}
+
+func newCappedBuffer(limit int) *cappedBuffer {
+	return &cappedBuffer{limit: limit}
+}
+
+func (b *cappedBuffer) Write(p []byte) (int, error) {
+	if b.limit <= 0 {
+		b.truncated = true
+		return len(p), nil
+	}
+	remaining := b.limit - b.buf.Len()
+	if remaining <= 0 {
+		b.truncated = true
+		return len(p), nil
+	}
+	if len(p) > remaining {
+		_, _ = b.buf.Write(p[:remaining])
+		b.truncated = true
+		return len(p), nil
+	}
+	return b.buf.Write(p)
+}
+
+func (b *cappedBuffer) String() string {
+	if !b.truncated {
+		return b.buf.String()
+	}
+	return b.buf.String() + "\n[output truncated]\n"
+}
+
+func clampCommandTimeoutSeconds(timeout int) int {
+	if timeout <= 0 {
+		return defaultCommandTimeoutSeconds
+	}
+	if timeout > maxCommandTimeoutSeconds {
+		return maxCommandTimeoutSeconds
+	}
+	return timeout
+}
+
+func validateScriptPayload(code string, args, envVars []string) error {
+	if len(code) > maxScriptBytes {
+		return fmt.Errorf("script is too large: %d bytes", len(code))
+	}
+	return validateExecSlices(args, envVars)
+}
+
+func validateCommandPayload(command string, args, envVars []string) error {
+	if len(command) > maxCommandBytes {
+		return fmt.Errorf("command is too large: %d bytes", len(command))
+	}
+	return validateExecSlices(args, envVars)
+}
+
+func validateExecSlices(args, envVars []string) error {
+	if len(args) > maxExecArgs {
+		return fmt.Errorf("too many arguments: %d", len(args))
+	}
+	for _, arg := range args {
+		if len(arg) > maxExecArgBytes {
+			return fmt.Errorf("argument is too large: %d bytes", len(arg))
+		}
+	}
+	if len(envVars) > maxExecEnvVars {
+		return fmt.Errorf("too many environment variables: %d", len(envVars))
+	}
+	for _, envVar := range envVars {
+		if len(envVar) > maxExecEnvVarBytes {
+			return fmt.Errorf("environment variable is too large: %d bytes", len(envVar))
+		}
+	}
+	return nil
+}
+
+func terminalSessionLimitReached(count int) bool {
+	return count >= maxTerminalSessions
+}
+
 func DoPing(host string) (PingResponse, error) {
 	var ret PingResponse
 	pinger, err := ping.NewPinger(host)
@@ -142,7 +238,7 @@ func GenerateAgentID() string {
 
 // ShowVersionInfo prints basic debugging info
 func ShowVersionInfo(ver string) {
-	fmt.Println("Tactical RMM Agent:", ver)
+	fmt.Println("QDT RMM Agent:", ver)
 	fmt.Println("Arch:", runtime.GOARCH)
 	if runtime.GOOS == "windows" {
 		fmt.Println("Program Directory:", filepath.Join(os.Getenv("ProgramFiles"), progFilesName))

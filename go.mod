@@ -1,4 +1,4 @@
-module github.com/amidaware/rmmagent
+module github.com/Janqu/qdt-rmm-go
 
 go 1.20
 
