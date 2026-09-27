@@ -591,6 +591,7 @@ func (a *Agent) GetWMIInfo() map[string]interface{} {
 	if err != nil {
 		a.Logger.Debugln(err)
 	}
+	securityProducts := a.SecurityInventory()
 	localAdmins, err := GetLocalAdminsInventory()
 	if err != nil {
 		a.Logger.Debugln(err)
@@ -616,6 +617,7 @@ func (a *Agent) GetWMIInfo() map[string]interface{} {
 	wmiInfo["firewall_profiles"] = GetFirewallProfilesInventory()
 	wmiInfo["bitlocker"] = bitlocker
 	wmiInfo["antivirus"] = antivirus
+	wmiInfo["security_products"] = securityProducts
 	wmiInfo["local_admins"] = localAdmins
 
 	return wmiInfo

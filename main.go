@@ -141,6 +141,12 @@ func main() {
 		if err := enc.Encode(a.FirewallInventory()); err != nil {
 			log.Fatalln(err)
 		}
+	case "securityinventory":
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+		if err := enc.Encode(a.SecurityInventory()); err != nil {
+			log.Fatalln(err)
+		}
 	case "getpython":
 		a.GetPython(true)
 	case "installdeno":

@@ -203,6 +203,18 @@ type ChocoInstalled struct {
 	Installed bool   `json:"installed"`
 }
 
+type SecurityProductInventory struct {
+	Name         string   `json:"name"`
+	Vendor       string   `json:"vendor"`
+	Category     string   `json:"category"`
+	Healthy      bool     `json:"healthy"`
+	Running      bool     `json:"running"`
+	ProductState uint32   `json:"product_state,omitempty"`
+	Path         string   `json:"path,omitempty"`
+	Timestamp    string   `json:"timestamp,omitempty"`
+	Services     []string `json:"services,omitempty"`
+}
+
 // Disk holds physical disk info
 type Disk struct {
 	Device  string  `json:"device"`
