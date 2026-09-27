@@ -136,6 +136,35 @@ type PatchStatus struct {
 	MissingUpdates []string  `json:"missing_updates,omitempty"`
 }
 
+type PatchInventory struct {
+	AgentID         string            `json:"agent_id"`
+	Platform        string            `json:"platform"`
+	Supported       bool              `json:"supported"`
+	CheckedAt       time.Time         `json:"checked_at"`
+	PackageManager  string            `json:"package_manager"`
+	Appliance       string            `json:"appliance,omitempty"`
+	PatchAllAllowed bool              `json:"patch_all_allowed"`
+	Packages        []PatchPackage    `json:"packages,omitempty"`
+	Repositories    []PatchRepository `json:"repositories,omitempty"`
+	Error           string            `json:"error,omitempty"`
+}
+
+type PatchPackage struct {
+	Name             string `json:"name"`
+	CurrentVersion   string `json:"current_version,omitempty"`
+	AvailableVersion string `json:"available_version,omitempty"`
+	NeedsUpdate      bool   `json:"needs_update"`
+	IsSecurityUpdate bool   `json:"is_security_update"`
+	SourceRepository string `json:"source_repository,omitempty"`
+}
+
+type PatchRepository struct {
+	Name    string `json:"name"`
+	URL     string `json:"url,omitempty"`
+	Enabled bool   `json:"enabled"`
+	Secure  bool   `json:"secure"`
+}
+
 type ChocoInstalled struct {
 	AgentID   string `json:"agent_id"`
 	Installed bool   `json:"installed"`
