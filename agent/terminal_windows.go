@@ -21,6 +21,7 @@ import (
 	"strings"
 	"sync"
 	"syscall"
+	"time"
 	"unsafe"
 
 	"github.com/fourcorelabs/wintoken"
@@ -44,6 +45,7 @@ type winTerminalSession struct {
 	wp        *winpty.WinPTY
 	wpIn      *os.File
 	wpOut     *os.File
+	lastSeen  time.Time
 	closeOnce sync.Once
 }
 
@@ -258,12 +260,13 @@ func startTerminalSessionConPTY(agentID string, sessionID string, shell string, 
 	outRFile := os.NewFile(uintptr(outR), "conpty-out")
 
 	sess := &winTerminalSession{
-		id:      sessionID,
-		backend: "conpty",
-		hPC:     hPC,
-		proc:    0,
-		inW:     inWFile,
-		outR:    outRFile,
+		id:       sessionID,
+		backend:  "conpty",
+		hPC:      hPC,
+		proc:     0,
+		inW:      inWFile,
+		outR:     outRFile,
+		lastSeen: time.Now(),
 	}
 
 	winTermMu.Lock()
@@ -402,6 +405,7 @@ func startTerminalSessionConPTY(agentID string, sessionID string, shell string, 
 	sess.job = job
 
 	go streamTerminalOutputWindows(agentID, sessionID, outRFile, nc, logger)
+	go reapIdleTerminalSessionWindows(sessionID, logger)
 	go func() {
 		_, _ = windows.WaitForSingleObject(sess.proc, windows.INFINITE)
 
@@ -459,6 +463,9 @@ func KillTerminalSessionWindows(sessionID string) error {
 func FeedTerminalInputWindows(sessionID string, input string) error {
 	winTermMu.Lock()
 	sess, ok := winTerms[sessionID]
+	if ok {
+		sess.lastSeen = time.Now()
+	}
 	winTermMu.Unlock()
 
 	if !ok {
@@ -487,6 +494,9 @@ func ResizeTerminalSessionWindows(sessionID string, rows, cols int) error {
 
 	winTermMu.Lock()
 	sess, ok := winTerms[sessionID]
+	if ok {
+		sess.lastSeen = time.Now()
+	}
 	winTermMu.Unlock()
 
 	if !ok {
@@ -508,6 +518,26 @@ func ResizeTerminalSessionWindows(sessionID string, rows, cols int) error {
 		return nil
 	}
 	return resizePseudoConsole(sess.hPC, int16(cols), int16(rows))
+}
+
+func reapIdleTerminalSessionWindows(sessionID string, logger *logrus.Logger) {
+	ticker := time.NewTicker(time.Minute)
+	defer ticker.Stop()
+	for range ticker.C {
+		winTermMu.Lock()
+		sess, ok := winTerms[sessionID]
+		if !ok {
+			winTermMu.Unlock()
+			return
+		}
+		idle := time.Since(sess.lastSeen)
+		winTermMu.Unlock()
+		if idle >= terminalIdleTimeout {
+			logger.Infof("terminal session idle timeout: session=%s idle=%s", sessionID, idle)
+			_ = KillTerminalSessionWindows(sessionID)
+			return
+		}
+	}
 }
 
 func streamTerminalOutputWindows(agentID, sessionID string, out *os.File, nc *nats.Conn, logger *logrus.Logger) {

@@ -864,9 +864,10 @@ func (a *Agent) RunTask(id int, jitter bool) error {
 }
 
 type TerminalSession struct {
-	ID   string
-	Cmd  *exec.Cmd
-	Ptmx *os.File
+	ID       string
+	Cmd      *exec.Cmd
+	Ptmx     *os.File
+	LastSeen time.Time
 }
 
 type PendingTerminalResize struct {
@@ -973,9 +974,10 @@ func (a *Agent) StartTerminalSession(sessionID, shell string, nc *nats.Conn) err
 		return fmt.Errorf("terminal session limit reached: %d", maxTerminalSessions)
 	}
 	a.TerminalSessions[sessionID] = &TerminalSession{
-		ID:   sessionID,
-		Cmd:  cmd,
-		Ptmx: ptmx,
+		ID:       sessionID,
+		Cmd:      cmd,
+		Ptmx:     ptmx,
+		LastSeen: time.Now(),
 	}
 	a.TerminalSessionsMu.Unlock()
 
@@ -983,6 +985,7 @@ func (a *Agent) StartTerminalSession(sessionID, shell string, nc *nats.Conn) err
 	a.Logger.Debugf("Registered terminal session %s", sessionID)
 
 	go a.StreamTerminalOutput(sessionID, ptmx, nc)
+	go a.reapIdleTerminalSession(sessionID)
 	go func() {
 		waitErr := cmd.Wait()
 		a.Logger.Debugf("Terminal session %s exited: %v", sessionID, waitErr)
@@ -1000,6 +1003,26 @@ func (a *Agent) StartTerminalSession(sessionID, shell string, nc *nats.Conn) err
 	}()
 
 	return nil
+}
+
+func (a *Agent) reapIdleTerminalSession(sessionID string) {
+	ticker := time.NewTicker(time.Minute)
+	defer ticker.Stop()
+	for range ticker.C {
+		a.TerminalSessionsMu.Lock()
+		sess, ok := a.TerminalSessions[sessionID]
+		if !ok {
+			a.TerminalSessionsMu.Unlock()
+			return
+		}
+		idle := time.Since(sess.LastSeen)
+		a.TerminalSessionsMu.Unlock()
+		if idle >= terminalIdleTimeout {
+			a.Logger.Infof("terminal session idle timeout: session=%s idle=%s", sessionID, idle)
+			_ = a.KillTerminalSession(sessionID)
+			return
+		}
+	}
 }
 
 func (a *Agent) StreamTerminalOutput(sessionID string, ptmx *os.File, nc *nats.Conn) {
@@ -1065,6 +1088,9 @@ func (a *Agent) FeedTerminalInput(sessionID string, input string) error {
 
 	a.TerminalSessionsMu.Lock()
 	sess, ok := a.TerminalSessions[sessionID]
+	if ok {
+		sess.LastSeen = time.Now()
+	}
 	a.TerminalSessionsMu.Unlock()
 
 	if !ok {
@@ -1088,6 +1114,9 @@ func (a *Agent) ResizeTerminalSession(sessionID string, rows, cols int) error {
 
 	a.TerminalSessionsMu.Lock()
 	sess, ok := a.TerminalSessions[sessionID]
+	if ok {
+		sess.LastSeen = time.Now()
+	}
 	a.TerminalSessionsMu.Unlock()
 
 	if !ok {

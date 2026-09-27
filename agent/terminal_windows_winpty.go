@@ -18,6 +18,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	winpty "github.com/iamacarpet/go-winpty"
 	"github.com/nats-io/nats.go"
@@ -104,11 +105,12 @@ func startTerminalSessionWinPTY(agentID, programDir, sessionID, shell string, ru
 	}()
 
 	sess := &winTerminalSession{
-		id:      sessionID,
-		backend: "winpty",
-		wp:      wp,
-		wpIn:    wp.StdIn,
-		wpOut:   wp.StdOut,
+		id:       sessionID,
+		backend:  "winpty",
+		wp:       wp,
+		wpIn:     wp.StdIn,
+		wpOut:    wp.StdOut,
+		lastSeen: time.Now(),
 	}
 
 	if ph := wp.GetProcHandle(); ph != 0 {
@@ -123,6 +125,7 @@ func startTerminalSessionWinPTY(agentID, programDir, sessionID, shell string, ru
 	applyPendingResizeWindows(sessionID, logger)
 	cleanup = false
 	go streamTerminalOutputWindows(agentID, sessionID, sess.wpOut, nc, logger)
+	go reapIdleTerminalSessionWindows(sessionID, logger)
 
 	go func() {
 		if sess.proc != 0 {

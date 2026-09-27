@@ -28,6 +28,12 @@ type FirewallProfileInventory struct {
 	DefaultOutboundAction uint64 `json:"default_outbound_action"`
 }
 
+type LocalAdminInventory struct {
+	Domain        string `json:"domain"`
+	Name          string `json:"name"`
+	DomainAndName string `json:"domain_and_name"`
+}
+
 func keyExists(path string) (bool, error) {
 	k, err := registry.OpenKey(registry.LOCAL_MACHINE, path, registry.QUERY_VALUE)
 	if err == nil {
@@ -134,6 +140,22 @@ func GetAntivirusInventory() ([]AntivirusInventory, error) {
 		return []AntivirusInventory{}, err
 	}
 	return dst, nil
+}
+
+func GetLocalAdminsInventory() ([]LocalAdminInventory, error) {
+	members, err := wapf.LocalGroupGetMembers("Administrators")
+	if err != nil {
+		return []LocalAdminInventory{}, err
+	}
+	ret := make([]LocalAdminInventory, 0, len(members))
+	for _, member := range members {
+		ret = append(ret, LocalAdminInventory{
+			Domain:        member.Domain,
+			Name:          member.Name,
+			DomainAndName: member.DomainAndName,
+		})
+	}
+	return ret, nil
 }
 
 func readFirewallProfile(path string) (FirewallProfileInventory, bool) {

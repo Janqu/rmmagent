@@ -53,6 +53,7 @@ const (
 	maxExecEnvVars               = 128
 	maxExecEnvVarBytes           = 8 << 10
 	maxTerminalSessions          = 4
+	terminalIdleTimeout          = 30 * time.Minute
 )
 
 type cappedBuffer struct {
