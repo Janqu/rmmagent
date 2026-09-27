@@ -717,19 +717,7 @@ func NewCOMObject(id string) (*ole.IDispatch, error) {
 
 // SystemRebootRequired checks whether a system reboot is required.
 func (a *Agent) SystemRebootRequired() (bool, error) {
-	regKeys := []string{
-		`SOFTWARE\Microsoft\Windows\CurrentVersion\WindowsUpdate\Auto Update\RebootRequired`,
-	}
-	for _, key := range regKeys {
-		k, err := registry.OpenKey(registry.LOCAL_MACHINE, key, registry.QUERY_VALUE)
-		if err == nil {
-			k.Close()
-			return true, nil
-		} else if err != registry.ErrNotExist {
-			return false, err
-		}
-	}
-	return false, nil
+	return len(a.SystemRebootReasons()) > 0, nil
 }
 
 func (a *Agent) SendSoftware() {

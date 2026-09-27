@@ -582,6 +582,15 @@ func (a *Agent) GetWMIInfo() map[string]interface{} {
 	if err != nil {
 		a.Logger.Debugln(err)
 	}
+	rebootReasons := a.SystemRebootReasons()
+	bitlocker, err := GetBitLockerInventory()
+	if err != nil {
+		a.Logger.Debugln(err)
+	}
+	antivirus, err := GetAntivirusInventory()
+	if err != nil {
+		a.Logger.Debugln(err)
+	}
 
 	wmiInfo["comp_sys_prod"] = compSysProd
 	wmiInfo["comp_sys"] = compSys
@@ -596,6 +605,17 @@ func (a *Agent) GetWMIInfo() map[string]interface{} {
 	wmiInfo["cpu"] = cpu
 	wmiInfo["usb"] = usb
 	wmiInfo["graphics"] = graphics
+	wmiInfo["reboot"] = map[string]interface{}{
+		"needed":  len(rebootReasons) > 0,
+		"reasons": rebootReasons,
+	}
+	wmiInfo["firewall_profiles"] = GetFirewallProfilesInventory()
+	wmiInfo["bitlocker"] = bitlocker
+	wmiInfo["antivirus"] = antivirus
 
 	return wmiInfo
+}
+
+func wmiQueryNamespace(query string, dst interface{}, namespace string) error {
+	return wmi.QueryNamespace(query, dst, namespace)
 }
