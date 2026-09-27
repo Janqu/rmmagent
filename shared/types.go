@@ -137,16 +137,39 @@ type PatchStatus struct {
 }
 
 type PatchInventory struct {
-	AgentID         string            `json:"agent_id"`
-	Platform        string            `json:"platform"`
-	Supported       bool              `json:"supported"`
-	CheckedAt       time.Time         `json:"checked_at"`
-	PackageManager  string            `json:"package_manager"`
-	Appliance       string            `json:"appliance,omitempty"`
-	PatchAllAllowed bool              `json:"patch_all_allowed"`
-	Packages        []PatchPackage    `json:"packages,omitempty"`
-	Repositories    []PatchRepository `json:"repositories,omitempty"`
-	Error           string            `json:"error,omitempty"`
+	AgentID         string             `json:"agent_id"`
+	Platform        string             `json:"platform"`
+	Supported       bool               `json:"supported"`
+	CheckedAt       time.Time          `json:"checked_at"`
+	PackageManager  string             `json:"package_manager"`
+	Appliance       string             `json:"appliance,omitempty"`
+	PatchAllAllowed bool               `json:"patch_all_allowed"`
+	Packages        []PatchPackage     `json:"packages,omitempty"`
+	Repositories    []PatchRepository  `json:"repositories,omitempty"`
+	Firewall        *FirewallInventory `json:"firewall,omitempty"`
+	Error           string             `json:"error,omitempty"`
+}
+
+type FirewallInventory struct {
+	Detected        bool                `json:"detected"`
+	Appliance       string              `json:"appliance"`
+	Version         string              `json:"version,omitempty"`
+	ConfigPath      string              `json:"config_path,omitempty"`
+	ConfigReadable  bool                `json:"config_readable"`
+	Interfaces      []FirewallInterface `json:"interfaces,omitempty"`
+	RuleCount       int                 `json:"rule_count"`
+	NATRuleCount    int                 `json:"nat_rule_count"`
+	AliasCount      int                 `json:"alias_count"`
+	PatchAllAllowed bool                `json:"patch_all_allowed"`
+	FirmwareManaged bool                `json:"firmware_managed"`
+	SafetyNote      string              `json:"safety_note,omitempty"`
+}
+
+type FirewallInterface struct {
+	Key         string `json:"key"`
+	Name        string `json:"name,omitempty"`
+	Description string `json:"description,omitempty"`
+	Enabled     bool   `json:"enabled"`
 }
 
 type PatchPackage struct {

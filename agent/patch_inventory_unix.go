@@ -26,6 +26,7 @@ func (a *Agent) PatchInventory() rmm.PatchInventory {
 	}
 	if inv.Appliance = detectFirewallAppliance(); inv.Appliance != "" {
 		inv.PatchAllAllowed = false
+		inv.Firewall = collectFirewallInventory(inv.Appliance)
 	}
 
 	switch manager {

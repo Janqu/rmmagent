@@ -113,6 +113,14 @@ func (a *Agent) RunRPC() {
 				msg.Respond(resp)
 			}()
 
+		case "firewallinventory":
+			go func() {
+				var resp []byte
+				ret := codec.NewEncoderBytes(&resp, new(codec.MsgpackHandle))
+				ret.Encode(a.FirewallInventory())
+				msg.Respond(resp)
+			}()
+
 		case "patchmgmt":
 			go func(p *NatsMsg) {
 				var resp []byte
