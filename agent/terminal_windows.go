@@ -460,6 +460,20 @@ func KillTerminalSessionWindows(sessionID string) error {
 	return nil
 }
 
+func KillAllTerminalSessionsWindows(logger *logrus.Logger) {
+	winTermMu.Lock()
+	ids := make([]string, 0, len(winTerms))
+	for id := range winTerms {
+		ids = append(ids, id)
+	}
+	winTermMu.Unlock()
+
+	for _, id := range ids {
+		logger.Infof("killing terminal session: session=%s reason=nats disconnect", id)
+		_ = KillTerminalSessionWindows(id)
+	}
+}
+
 func FeedTerminalInputWindows(sessionID string, input string) error {
 	winTermMu.Lock()
 	sess, ok := winTerms[sessionID]

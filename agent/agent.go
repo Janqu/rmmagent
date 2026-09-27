@@ -605,6 +605,12 @@ func (a *Agent) setupNatsOptions() []nats.Option {
 			a.Logger.Debugln("NATS disconnected")
 		}
 		a.Logger.Debugf("%+v\n", nc.Statistics)
+		switch runtime.GOOS {
+		case "windows":
+			KillAllTerminalSessionsWindows(a.Logger)
+		default:
+			a.KillAllTerminalSessions("nats disconnect")
+		}
 	}))
 	opts = append(opts, nats.ReconnectHandler(func(nc *nats.Conn) {
 		a.Logger.Debugln("NATS reconnected")
@@ -1168,6 +1174,20 @@ func (a *Agent) KillTerminalSession(sessionID string) error {
 
 	a.Logger.Debugf("Terminal session %s force-killed", sessionID)
 	return nil
+}
+
+func (a *Agent) KillAllTerminalSessions(reason string) {
+	a.TerminalSessionsMu.Lock()
+	ids := make([]string, 0, len(a.TerminalSessions))
+	for id := range a.TerminalSessions {
+		ids = append(ids, id)
+	}
+	a.TerminalSessionsMu.Unlock()
+
+	for _, id := range ids {
+		a.Logger.Infof("killing terminal session: session=%s reason=%s", id, reason)
+		_ = a.KillTerminalSession(id)
+	}
 }
 
 func (a *Agent) SendTerminalError(agentID, sessionID, message string, nc *nats.Conn) {

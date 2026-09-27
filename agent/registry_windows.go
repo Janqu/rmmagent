@@ -161,6 +161,9 @@ const (
 	RegTypeDWORD    = "REG_DWORD"
 	RegTypeQWORD    = "REG_QWORD"
 	RegTypeBinary   = "REG_BINARY"
+
+	defaultRegistryPageSize = 200
+	maxRegistryPageSize     = 500
 )
 
 // Parse "HKEY_LOCAL_MACHINE\\SOFTWARE" → registry hive + relative path
@@ -211,6 +214,7 @@ func listTopLevelHives() []RegistryNode {
 }
 
 func BrowseRegistry(path string, page, pageSize int) ([]RegistryNode, []RegistryValue, bool, error) {
+	page, pageSize = normalizeRegistryPage(page, pageSize)
 	if strings.ToLower(path) == "computer" || path == "" {
 		return listTopLevelHives(), nil, false, nil
 	}
@@ -232,6 +236,9 @@ func BrowseRegistry(path string, page, pageSize int) ([]RegistryNode, []Registry
 	}
 
 	start := (page - 1) * pageSize
+	if start >= len(subkeys) {
+		return []RegistryNode{}, []RegistryValue{}, false, nil
+	}
 	end := start + pageSize
 	if end > len(subkeys) {
 		end = len(subkeys)
@@ -254,6 +261,19 @@ func BrowseRegistry(path string, page, pageSize int) ([]RegistryNode, []Registry
 	}
 
 	return nodes, values, hasMore, nil
+}
+
+func normalizeRegistryPage(page, pageSize int) (int, int) {
+	if page < 1 {
+		page = 1
+	}
+	if pageSize < 1 {
+		pageSize = defaultRegistryPageSize
+	}
+	if pageSize > maxRegistryPageSize {
+		pageSize = maxRegistryPageSize
+	}
+	return page, pageSize
 }
 
 func scanSubkeys(k registry.Key, names []string) []RegistryNode {

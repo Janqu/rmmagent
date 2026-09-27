@@ -1073,6 +1073,10 @@ func KillTerminalSessionWindows(sessionID string) error {
 	return errors.New("failed to kill terminal session on windows")
 }
 
+func KillAllTerminalSessionsWindows(logger *logrus.Logger) {
+	// no-op on non-windows builds
+}
+
 func FeedTerminalInputWindows(sessionID string, input string) error {
 	return errors.New("failed to feed input terminal session on windows")
 }
