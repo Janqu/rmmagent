@@ -159,6 +159,12 @@ func main() {
 		if err := enc.Encode(a.HardwareInventory()); err != nil {
 			log.Fatalln(err)
 		}
+	case "ransomwarewatch":
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+		if err := enc.Encode(a.RansomwareWatch()); err != nil {
+			log.Fatalln(err)
+		}
 	case "getpython":
 		a.GetPython(true)
 	case "installdeno":

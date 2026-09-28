@@ -32,6 +32,34 @@ type ProcessMsg struct {
 	CPU      string `json:"cpu_percent"`
 }
 
+type RansomwareWatchReport struct {
+	AgentID            string                   `json:"agent_id"`
+	Platform           string                   `json:"platform"`
+	CheckedAt          time.Time                `json:"checked_at"`
+	Suspicious         bool                     `json:"suspicious"`
+	Score              int                      `json:"score"`
+	Canaries           []RansomwareCanaryStatus `json:"canaries,omitempty"`
+	Findings           []RansomwareWatchFinding `json:"findings,omitempty"`
+	RecommendedActions []string                 `json:"recommended_actions,omitempty"`
+	WazuhCompatible    bool                     `json:"wazuh_compatible"`
+}
+
+type RansomwareCanaryStatus struct {
+	Path    string `json:"path"`
+	Status  string `json:"status"`
+	Healthy bool   `json:"healthy"`
+	Error   string `json:"error,omitempty"`
+}
+
+type RansomwareWatchFinding struct {
+	Category string `json:"category"`
+	Severity string `json:"severity"`
+	Title    string `json:"title"`
+	Detail   string `json:"detail,omitempty"`
+	PID      int32  `json:"pid,omitempty"`
+	Process  string `json:"process,omitempty"`
+}
+
 type AgentConfig struct {
 	BaseURL            string
 	AgentID            string

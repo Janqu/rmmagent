@@ -650,6 +650,7 @@ func (a *Agent) GetWMIInfo() map[string]interface{} {
 	if len(gpus) == 1 && gpus[0] == "unknown unknown" {
 		wmiInfo["gpus"] = ""
 	}
+	wmiInfo["ransomware_watch"] = a.RansomwareWatch()
 
 	return wmiInfo
 }
