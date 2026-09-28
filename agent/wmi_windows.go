@@ -592,6 +592,8 @@ func (a *Agent) GetWMIInfo() map[string]interface{} {
 		a.Logger.Debugln(err)
 	}
 	securityProducts := a.SecurityInventory()
+	temperatures := a.TemperatureInventory()
+	hardware := a.HardwareInventory()
 	localAdmins, err := GetLocalAdminsInventory()
 	if err != nil {
 		a.Logger.Debugln(err)
@@ -618,6 +620,8 @@ func (a *Agent) GetWMIInfo() map[string]interface{} {
 	wmiInfo["bitlocker"] = bitlocker
 	wmiInfo["antivirus"] = antivirus
 	wmiInfo["security_products"] = securityProducts
+	wmiInfo["temperatures"] = temperatures
+	wmiInfo["hardware"] = hardware
 	wmiInfo["local_admins"] = localAdmins
 
 	return wmiInfo

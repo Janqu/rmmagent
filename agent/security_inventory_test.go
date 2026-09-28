@@ -23,3 +23,22 @@ func TestClassifySecurityProduct(t *testing.T) {
 		})
 	}
 }
+
+func TestSecurityCandidateName(t *testing.T) {
+	if !securityCandidateName("acronis_mms") {
+		t.Fatal("acronis_mms should be detected")
+	}
+	if !securityCandidateName("eea.service") {
+		t.Fatal("eea.service should be detected as ESET")
+	}
+	if securityCandidateName("sshd") {
+		t.Fatal("sshd should not be detected")
+	}
+}
+
+func TestDedupeStrings(t *testing.T) {
+	got := dedupeStrings([]string{"Acronis", "acronis", "", "ESET"})
+	if len(got) != 2 {
+		t.Fatalf("len=%d got=%v", len(got), got)
+	}
+}

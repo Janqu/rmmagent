@@ -10,7 +10,7 @@ type securityVendorRule struct {
 
 var securityVendorRules = []securityVendorRule{
 	{Vendor: "Bitdefender", Category: "edr", Needles: []string{"bitdefender", "endpoint security tools", "epsecurityservice", "epupdateservice", "epprotectedservice", "bdservicehost"}},
-	{Vendor: "ESET", Category: "antivirus", Needles: []string{"eset", "ekrn", "era agent", "eraagentsvc"}},
+	{Vendor: "ESET", Category: "antivirus", Needles: []string{"eset", "ekrn", "era agent", "eraagentsvc", "eraagent", "eea", "efs"}},
 	{Vendor: "Acronis", Category: "backup_security", Needles: []string{"acronis", "cyber protect", "active protection", "acrsch", "aakore"}},
 	{Vendor: "Microsoft Defender", Category: "antivirus", Needles: []string{"windows defender", "microsoft defender", "windefend", "msmpeng"}},
 	{Vendor: "Sophos", Category: "edr", Needles: []string{"sophos"}},
@@ -32,4 +32,23 @@ func classifySecurityProduct(text string) (string, string) {
 		}
 	}
 	return "Unknown", "security"
+}
+
+func securityCandidateName(name string) bool {
+	vendor, _ := classifySecurityProduct(name)
+	return vendor != "Unknown"
+}
+
+func dedupeStrings(in []string) []string {
+	seen := map[string]bool{}
+	out := make([]string, 0, len(in))
+	for _, s := range in {
+		key := strings.ToLower(strings.TrimSpace(s))
+		if key == "" || seen[key] {
+			continue
+		}
+		seen[key] = true
+		out = append(out, s)
+	}
+	return out
 }

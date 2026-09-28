@@ -147,6 +147,18 @@ func main() {
 		if err := enc.Encode(a.SecurityInventory()); err != nil {
 			log.Fatalln(err)
 		}
+	case "temperatureinventory":
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+		if err := enc.Encode(a.TemperatureInventory()); err != nil {
+			log.Fatalln(err)
+		}
+	case "hardwareinventory":
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+		if err := enc.Encode(a.HardwareInventory()); err != nil {
+			log.Fatalln(err)
+		}
 	case "getpython":
 		a.GetPython(true)
 	case "installdeno":

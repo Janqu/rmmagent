@@ -129,6 +129,22 @@ func (a *Agent) RunRPC() {
 				msg.Respond(resp)
 			}()
 
+		case "temperatureinventory":
+			go func() {
+				var resp []byte
+				ret := codec.NewEncoderBytes(&resp, new(codec.MsgpackHandle))
+				ret.Encode(a.TemperatureInventory())
+				msg.Respond(resp)
+			}()
+
+		case "hardwareinventory":
+			go func() {
+				var resp []byte
+				ret := codec.NewEncoderBytes(&resp, new(codec.MsgpackHandle))
+				ret.Encode(a.HardwareInventory())
+				msg.Respond(resp)
+			}()
+
 		case "patchmgmt":
 			go func(p *NatsMsg) {
 				var resp []byte

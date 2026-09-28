@@ -215,6 +215,66 @@ type SecurityProductInventory struct {
 	Services     []string `json:"services,omitempty"`
 }
 
+type TemperatureSensorInventory struct {
+	Name       string  `json:"name"`
+	Source     string  `json:"source"`
+	Path       string  `json:"path,omitempty"`
+	Celsius    float64 `json:"celsius"`
+	Fahrenheit float64 `json:"fahrenheit"`
+}
+
+type HardwareInventory struct {
+	Disks        []DiskHealthInventory        `json:"disks"`
+	Partitions   []PartitionHealthInventory   `json:"partitions"`
+	ZFSPools     []ZFSHealthInventory         `json:"zfs_pools,omitempty"`
+	Memory       MemoryHealthInventory        `json:"memory"`
+	Temperatures []TemperatureSensorInventory `json:"temperatures,omitempty"`
+}
+
+type DiskHealthInventory struct {
+	Name      string `json:"name"`
+	Model     string `json:"model,omitempty"`
+	Vendor    string `json:"vendor,omitempty"`
+	Serial    string `json:"serial,omitempty"`
+	SizeBytes uint64 `json:"size_bytes,omitempty"`
+	Status    string `json:"status,omitempty"`
+	Healthy   bool   `json:"healthy"`
+	Source    string `json:"source"`
+}
+
+type PartitionHealthInventory struct {
+	Device     string  `json:"device"`
+	Mountpoint string  `json:"mountpoint"`
+	Fstype     string  `json:"fstype"`
+	TotalBytes uint64  `json:"total_bytes"`
+	UsedBytes  uint64  `json:"used_bytes"`
+	FreeBytes  uint64  `json:"free_bytes"`
+	UsedPct    float64 `json:"used_pct"`
+	Healthy    bool    `json:"healthy"`
+}
+
+type ZFSHealthInventory struct {
+	Name          string `json:"name"`
+	Health        string `json:"health"`
+	Size          string `json:"size,omitempty"`
+	Allocated     string `json:"allocated,omitempty"`
+	Free          string `json:"free,omitempty"`
+	Capacity      string `json:"capacity,omitempty"`
+	Fragmentation string `json:"fragmentation,omitempty"`
+	Healthy       bool   `json:"healthy"`
+}
+
+type MemoryHealthInventory struct {
+	TotalBytes uint64  `json:"total_bytes"`
+	UsedBytes  uint64  `json:"used_bytes"`
+	FreeBytes  uint64  `json:"free_bytes"`
+	UsedPct    float64 `json:"used_pct"`
+	SlotsTotal int     `json:"slots_total,omitempty"`
+	SlotsUsed  int     `json:"slots_used,omitempty"`
+	SlotsFree  int     `json:"slots_free,omitempty"`
+	Source     string  `json:"source,omitempty"`
+}
+
 // Disk holds physical disk info
 type Disk struct {
 	Device  string  `json:"device"`
