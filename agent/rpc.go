@@ -12,6 +12,7 @@ https://license.tacticalrmm.com
 package agent
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"runtime"
@@ -27,6 +28,10 @@ import (
 )
 
 type NatsMsg struct {
+	RestoreID              int               `json:"restore_id"`
+	RestorePath            string            `json:"restore_path"`
+	CheckURL               string            `json:"check_url"`
+	PreviousManifestURL    string            `json:"previous_manifest_url"`
 	Func                   string            `json:"func"`
 	Timeout                int               `json:"timeout"`
 	Data                   map[string]string `json:"payload"`
@@ -46,6 +51,14 @@ type NatsMsg struct {
 	NushellEnableConfig    bool              `json:"nushell_enable_config"`
 	DenoDefaultPermissions string            `json:"deno_default_permissions"`
 	Stream                 bool              `json:"stream"`
+	ProfileID              int               `json:"profile_id"`
+	RepoID                 string            `json:"repo_id"`
+	Paths                  []string          `json:"paths"`
+	Excludes               []string          `json:"excludes"`
+	ChunkBytes             int               `json:"chunk_bytes"`
+	Endpoint               string            `json:"endpoint"`
+	BlobURL                string            `json:"blob_url"`
+	ManifestURL            string            `json:"manifest_url"`
 }
 
 var (
@@ -64,6 +77,7 @@ func (a *Agent) RunRPC() {
 	}
 
 	go a.RunAsService(nc)
+	go a.backupReplicaWorker()
 
 	var wg sync.WaitGroup
 	wg.Add(1)
@@ -152,6 +166,77 @@ func (a *Agent) RunRPC() {
 				ret.Encode(a.RansomwareWatch())
 				msg.Respond(resp)
 			}()
+
+		case "backup_capabilities":
+			var response []byte
+			if err := codec.NewEncoderBytes(&response, new(codec.MsgpackHandle)).Encode(map[string]interface{}{"restore_v2": true}); err == nil {
+				msg.Respond(response)
+			}
+
+		case "backup_replica_read":
+			go func(p *NatsMsg) {
+				var response []byte
+				if err := codec.NewEncoderBytes(&response, new(codec.MsgpackHandle)).Encode(a.backupReplicaRead(p.Data)); err == nil {
+					msg.Respond(response)
+				}
+			}(payload)
+
+		case "backup":
+			go a.RunBackup(BackupJob{
+				ID: payload.ID, ProfileID: payload.ProfileID, RepoID: payload.RepoID,
+				Paths: payload.Paths, Excludes: payload.Excludes, ChunkBytes: payload.ChunkBytes,
+				Endpoint: payload.Endpoint, BlobURL: payload.BlobURL, ManifestURL: payload.ManifestURL,
+				CheckURL: payload.CheckURL, PreviousManifestURL: payload.PreviousManifestURL,
+			})
+
+		case "backup_key":
+			go func(p *NatsMsg) {
+				var response []byte
+				if err := codec.NewEncoderBytes(&response, new(codec.MsgpackHandle)).Encode(a.backupKey(p.RepoID, p.Data)); err == nil {
+					msg.Respond(response)
+				}
+			}(payload)
+		case "backup_inspect":
+			go func(p *NatsMsg) {
+				result := a.backupInspect(BackupJob{ID: p.ID, RepoID: p.RepoID, BlobURL: p.BlobURL, ManifestURL: p.ManifestURL}, p.Data)
+				var response []byte
+				if err := codec.NewEncoderBytes(&response, new(codec.MsgpackHandle)).Encode(result); err == nil {
+					msg.Respond(response)
+				}
+			}(payload)
+		case "backup_restore_cancel":
+			if cancel, ok := backupRestoreCancels.Load(payload.RestoreID); ok {
+				cancel.(context.CancelFunc)()
+			}
+		case "backup_restore", "backup_restore_v2":
+			go a.RunBackupRestore(BackupJob{
+				ID: payload.ID, RepoID: payload.RepoID, BlobURL: payload.BlobURL, ManifestURL: payload.ManifestURL,
+				RestoreID: payload.RestoreID, RestorePath: payload.RestorePath, Paths: payload.Paths, Endpoint: payload.Endpoint,
+			})
+
+		case "backup_cancel":
+			go func(p *NatsMsg) {
+				var resp []byte
+				ret := codec.NewEncoderBytes(&resp, new(codec.MsgpackHandle))
+				ret.Encode(a.CancelBackup(p.ID))
+				msg.Respond(resp)
+			}(payload)
+
+		case "backup_sources":
+			go func() {
+				var resp []byte
+				ret := codec.NewEncoderBytes(&resp, new(codec.MsgpackHandle))
+				ret.Encode(a.BackupSources())
+				msg.Respond(resp)
+			}()
+
+		case "backup_browse":
+			go func(p *NatsMsg) {
+				var resp []byte
+				ret := codec.NewEncoderBytes(&resp, new(codec.MsgpackHandle))
+				ret.Encode(a.BackupBrowse(p.Data["path"]))
+				msg.Respond(resp)
+			}(payload)
 
 		case "patchmgmt":
 			go func(p *NatsMsg) {

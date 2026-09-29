@@ -1,6 +1,6 @@
 module github.com/Janqu/qdt-rmm-agent
 
-go 1.20
+go 1.25
 
 require (
 	github.com/StackExchange/wmi v1.2.1
