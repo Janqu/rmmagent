@@ -28,6 +28,7 @@ import (
 )
 
 type NatsMsg struct {
+	Hooks                  *BackupHooks      `json:"hooks"`
 	LANCache               bool              `json:"lan_cache"`
 	RestoreID              int               `json:"restore_id"`
 	RestorePath            string            `json:"restore_path"`
@@ -193,7 +194,7 @@ func (a *Agent) RunRPC() {
 			}(payload)
 		case "backup_capabilities":
 			var response []byte
-			if err := codec.NewEncoderBytes(&response, new(codec.MsgpackHandle)).Encode(map[string]interface{}{"restore_v2": true, "browse_tree": true, "backup_destination": true, "backup_lan": true}); err == nil {
+			if err := codec.NewEncoderBytes(&response, new(codec.MsgpackHandle)).Encode(map[string]interface{}{"restore_v2": true, "browse_tree": true, "backup_destination": true, "backup_lan": true, "backup_hooks": true}); err == nil {
 				msg.Respond(response)
 			}
 
@@ -207,6 +208,7 @@ func (a *Agent) RunRPC() {
 
 		case "backup":
 			go a.RunBackup(BackupJob{
+				Hooks:    payload.Hooks,
 				LANCache: payload.LANCache, ID: payload.ID, ProfileID: payload.ProfileID, RepoID: payload.RepoID,
 				Paths: payload.Paths, Excludes: payload.Excludes, ChunkBytes: payload.ChunkBytes,
 				Endpoint: payload.Endpoint, BlobURL: payload.BlobURL, ManifestURL: payload.ManifestURL,

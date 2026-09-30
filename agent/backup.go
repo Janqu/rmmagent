@@ -31,6 +31,7 @@ const (
 var backupCancels sync.Map
 
 type BackupJob struct {
+	Hooks               *BackupHooks
 	LANCache            bool
 	RestoreID           int
 	RestorePath         string
@@ -137,21 +138,30 @@ func backupAddSource(out *[]BackupSource, path, label, kind string) {
 func (a *Agent) RunBackup(job BackupJob) {
 	ctx, cancel := context.WithCancel(context.Background())
 	if job.ID != 0 {
-		backupCancels.Store(job.ID, cancel)
+		if _, active := backupCancels.LoadOrStore(job.ID, cancel); active {
+			cancel()
+			return
+		}
 		defer backupCancels.Delete(job.ID)
 	}
 	defer cancel()
 	started := time.Now().UTC()
-	stats, err := a.runBackup(ctx, job, started)
+	stats, hooks, err := a.runBackupWithHooks(ctx, job, started)
 	if err != nil {
 		state, code := "failed", 1
 		if errors.Is(err, context.Canceled) {
 			state, code = "canceled", 130
 		}
-		a.backupStatus(job.Endpoint, stats.status(job.ID, state, err.Error(), code))
+		body := stats.status(job.ID, state, err.Error(), code)
+		body["hook_results"] = hooks
+		a.backupStatus(job.Endpoint, body)
 		return
 	}
 	body := stats.status(job.ID, "success", "", 0)
+	body["hook_results"] = hooks
+	if warning := backupHookWarning(hooks); warning != "" {
+		body["error"] = warning
+	}
 	body["snapshot_id"] = fmt.Sprintf("%d", started.Unix())
 	a.backupStatus(job.Endpoint, body)
 }

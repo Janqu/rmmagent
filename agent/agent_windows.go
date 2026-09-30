@@ -270,15 +270,16 @@ func (a *Agent) RunScript(code string, shell string, args []string, timeout int,
 	// custom context handling, we need to kill child procs if this is a batch script,
 	// otherwise it will hang forever
 	// the normal exec.CommandContext() doesn't work since it only kills the parent process
-	go func(p int32) {
-
-		<-ctx.Done()
-
-		_ = KillProc(p)
+	done := make(chan error, 1)
+	go func() { done <- cmd.Wait() }()
+	var cmdErr error
+	select {
+	case cmdErr = <-done:
+	case <-ctx.Done():
 		timedOut = true
-	}(pid)
-
-	cmdErr := cmd.Wait()
+		_ = KillProc(pid)
+		cmdErr = <-done
+	}
 
 	if timedOut {
 		stdout = CleanString(outb.String())
