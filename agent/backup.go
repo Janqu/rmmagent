@@ -31,6 +31,7 @@ const (
 var backupCancels sync.Map
 
 type BackupJob struct {
+	LANCache            bool
 	RestoreID           int
 	RestorePath         string
 	ID                  int
@@ -212,6 +213,10 @@ func (a *Agent) runBackup(ctx context.Context, job BackupJob, started time.Time)
 	var lastSkipped string
 	lastProgress := time.Now().UTC()
 	a.backupStatus(job.Endpoint, stats.status(job.ID, "running", "", 0))
+	cacheDir, err := filepath.Abs(filepath.Join(a.ProgramDir, "backup", "lan-cache"))
+	if err != nil {
+		return stats, err
+	}
 	for _, root := range job.Paths {
 		err := filepath.WalkDir(root, func(path string, entry os.DirEntry, walkErr error) error {
 			if err := ctx.Err(); err != nil {
@@ -228,7 +233,13 @@ func (a *Agent) runBackup(ctx context.Context, job BackupJob, started time.Time)
 				}
 				return walkErr
 			}
-			if backupExcluded(path, job.Excludes) {
+			abs, err := filepath.Abs(path)
+			if err != nil {
+				return err
+			}
+			relative, relErr := filepath.Rel(cacheDir, abs)
+			internalCache := relErr == nil && (relative == "." || (relative != ".." && !strings.HasPrefix(relative, ".."+string(filepath.Separator))))
+			if internalCache || backupExcluded(path, job.Excludes) {
 				if entry.IsDir() {
 					return filepath.SkipDir
 				}
@@ -237,10 +248,7 @@ func (a *Agent) runBackup(ctx context.Context, job BackupJob, started time.Time)
 			if !entry.Type().IsRegular() {
 				return nil
 			}
-			path, err := filepath.Abs(path)
-			if err != nil {
-				return err
-			}
+			path = abs
 			if visited[path] {
 				return nil
 			}

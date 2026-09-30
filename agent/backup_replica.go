@@ -18,10 +18,12 @@ import (
 )
 
 type backupReplicaJob struct {
-	RunID  int    `json:"run_id"`
-	RepoID string `json:"repo_id"`
-	Path   string `json:"path"`
-	Lease  string `json:"lease"`
+	LanAddress  string `json:"lan_address"`
+	Fingerprint string `json:"fingerprint"`
+	RunID       int    `json:"run_id"`
+	RepoID      string `json:"repo_id"`
+	Path        string `json:"path"`
+	Lease       string `json:"lease"`
 }
 
 type backupReplicaObject struct {
@@ -35,6 +37,9 @@ func (a *Agent) backupReplicaWorker() {
 	for {
 		if err := a.backupReplicaPoll(context.Background()); err != nil {
 			a.Logger.Debugln("Backup copy:", err)
+		}
+		if err := a.backupLANPoll(context.Background()); err != nil {
+			a.Logger.Debugln("Backup LAN copy:", err)
 		}
 		time.Sleep(time.Minute)
 	}

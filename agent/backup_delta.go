@@ -46,9 +46,9 @@ func backupChunks(ctx context.Context, reader io.Reader, limit int, emit func([]
 	if limit < 64 || limit > backupMaxChunk {
 		return fmt.Errorf("invalid delta chunk limit")
 	}
-	average := 256 << 10
-	for average > limit/4 {
-		average >>= 1
+	average := 16
+	for average*2 <= limit/4 {
+		average <<= 1
 	}
 	minimum, maximum := average/4, average*4
 	mask := uint64(average - 1)
@@ -237,6 +237,16 @@ func (b *backupTransfer) put(ctx context.Context, id string, data []byte) error 
 	}
 	b.remember(id)
 	b.stats.Uploaded += int64(len(sealed))
+	if b.job.LANCache {
+		root, err := b.agent.backupLANCache(b.job.RepoID)
+		if err == nil {
+			err = backupReplicaWrite(root, id, sealed)
+			root.Close()
+		}
+		if err != nil {
+			b.agent.Logger.Warnln("LAN cache:", err)
+		}
+	}
 	return nil
 }
 

@@ -26,7 +26,7 @@ import (
 )
 
 var (
-	version = "2.11.1-qdt3"
+	version = "2.11.1-qdt4"
 	log     = logrus.New()
 	logFile *os.File
 )

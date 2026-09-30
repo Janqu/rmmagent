@@ -28,6 +28,7 @@ import (
 )
 
 type NatsMsg struct {
+	LANCache               bool              `json:"lan_cache"`
 	RestoreID              int               `json:"restore_id"`
 	RestorePath            string            `json:"restore_path"`
 	CheckURL               string            `json:"check_url"`
@@ -167,9 +168,32 @@ func (a *Agent) RunRPC() {
 				msg.Respond(resp)
 			}()
 
+		case "backup_lan_receive", "backup_lan_probe", "backup_transport_probe":
+			go func(p *NatsMsg) {
+				var result map[string]interface{}
+				switch p.Func {
+				case "backup_lan_receive":
+					result = backupLANReceive(p.Data)
+				case "backup_lan_probe":
+					result = a.backupTransportProbe(p.Data, true)
+				default:
+					result = a.backupTransportProbe(p.Data, false)
+				}
+				var response []byte
+				if err := codec.NewEncoderBytes(&response, new(codec.MsgpackHandle)).Encode(result); err == nil {
+					msg.Respond(response)
+				}
+			}(payload)
+		case "backup_destination_check":
+			go func(p *NatsMsg) {
+				var response []byte
+				if err := codec.NewEncoderBytes(&response, new(codec.MsgpackHandle)).Encode(backupDestinationCheck(p.Data["path"])); err == nil {
+					msg.Respond(response)
+				}
+			}(payload)
 		case "backup_capabilities":
 			var response []byte
-			if err := codec.NewEncoderBytes(&response, new(codec.MsgpackHandle)).Encode(map[string]interface{}{"restore_v2": true}); err == nil {
+			if err := codec.NewEncoderBytes(&response, new(codec.MsgpackHandle)).Encode(map[string]interface{}{"restore_v2": true, "browse_tree": true, "backup_destination": true, "backup_lan": true}); err == nil {
 				msg.Respond(response)
 			}
 
@@ -183,7 +207,7 @@ func (a *Agent) RunRPC() {
 
 		case "backup":
 			go a.RunBackup(BackupJob{
-				ID: payload.ID, ProfileID: payload.ProfileID, RepoID: payload.RepoID,
+				LANCache: payload.LANCache, ID: payload.ID, ProfileID: payload.ProfileID, RepoID: payload.RepoID,
 				Paths: payload.Paths, Excludes: payload.Excludes, ChunkBytes: payload.ChunkBytes,
 				Endpoint: payload.Endpoint, BlobURL: payload.BlobURL, ManifestURL: payload.ManifestURL,
 				CheckURL: payload.CheckURL, PreviousManifestURL: payload.PreviousManifestURL,

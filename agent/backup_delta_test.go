@@ -211,6 +211,12 @@ func TestBackupDeltaEndToEnd(t *testing.T) {
 		t.Fatal(err)
 	}
 
+ originalProgramDir:=a.ProgramDir
+ t.Chdir(originalProgramDir)
+ a.ProgramDir=""
+ if restored,_,_,err:=a.restoreSnapshot(context.Background(),job);err!=nil || !filepath.IsAbs(restored){t.Fatalf("Unix default restore destination: %q %v",restored,err)}
+ a.ProgramDir=originalProgramDir
+
 	transfer, original, err := a.backupSnapshot(context.Background(), job)
 	if err != nil {
 		t.Fatal(err)

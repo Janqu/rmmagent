@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"path"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -84,33 +86,74 @@ func (a *Agent) backupInspect(job BackupJob, data map[string]string) map[string]
 		}
 		return failure(fmt.Errorf("file is not present in this snapshot"))
 	}
+	return backupBrowseManifest(manifest, data)
+}
+
+func backupBrowseManifest(manifest backupManifest, data map[string]string) map[string]interface{} {
 	offset, err := strconv.Atoi(data["offset"])
 	if err != nil || offset < 0 {
-		return failure(fmt.Errorf("invalid page offset"))
+		return map[string]interface{}{"error": "invalid page offset"}
 	}
 	query := strings.ToLower(data["query"])
-	var entries []map[string]interface{}
-	total, replyBytes := 0, 0
-	pageFull := false
+	tree := data["view"] == "tree" && query == ""
+	folder := strings.TrimRight(strings.ReplaceAll(data["folder"], "\\", "/"), "/")
+	dirs := map[string]bool{}
+	var matches []map[string]interface{}
 	for _, item := range manifest.Files {
+		normalized := strings.ReplaceAll(item.Path, "\\", "/")
 		if !strings.Contains(strings.ToLower(item.Path), query) {
 			continue
 		}
-		if data["folder"] != "" && !backupSelected(item.Path, []string{data["folder"]}) {
+		if folder != "" && !backupSelected(item.Path, []string{folder}) {
 			continue
 		}
-		if total >= offset && !pageFull {
-			size := len(item.Path) + 128
-			if len(entries) == 100 || replyBytes+size > 512<<10 {
-				pageFull = true
-			} else {
-				replyBytes += size
-				entries = append(entries, map[string]interface{}{"path": item.Path, "size": item.Size, "modified": item.ModTime.Format(time.RFC3339)})
+		if tree {
+			relative := strings.TrimLeft(strings.TrimPrefix(normalized, folder), "/")
+			if slash := strings.IndexByte(relative, '/'); slash >= 0 {
+				dir := relative[:slash]
+				full := dir
+				if folder != "" {
+					full = folder + "/" + dir
+				} else if strings.HasPrefix(normalized, "//") {
+					full = "//" + dir
+				} else if strings.HasPrefix(normalized, "/") {
+					full = "/" + dir
+				}
+				dirs[full] = true
+				continue
 			}
 		}
-		total++
+		matches = append(matches, map[string]interface{}{"path": item.Path, "size": item.Size, "modified": item.ModTime.Format(time.RFC3339), "kind": "file"})
 	}
-	return map[string]interface{}{"files": entries, "total": total, "offset": offset}
+	for dir := range dirs {
+		matches = append(matches, map[string]interface{}{"path": dir, "size": 0, "kind": "directory"})
+	}
+	sort.Slice(matches, func(i, j int) bool {
+		a, b := matches[i], matches[j]
+		if a["kind"] != b["kind"] {
+			return a["kind"] == "directory"
+		}
+		return a["path"].(string) < b["path"].(string)
+	})
+	var entries []map[string]interface{}
+	replyBytes := 0
+	for index := offset; index < len(matches) && len(entries) < 100; index++ {
+		item := matches[index]
+		size := len(item["path"].(string)) + 128
+		if replyBytes+size > 512<<10 {
+			break
+		}
+		entries = append(entries, item)
+		replyBytes += size
+	}
+	parent := ""
+	if folder != "" {
+		parent = path.Dir(folder)
+		if parent == "." || parent == "/" {
+			parent = ""
+		}
+	}
+	return map[string]interface{}{"files": entries, "total": len(matches), "offset": offset, "parent": parent, "tree": tree}
 }
 
 func (b *backupTransfer) fileRange(ctx context.Context, item backupManifestFile, offset int64, limit int) ([]byte, error) {
@@ -200,7 +243,11 @@ func (a *Agent) restoreSnapshot(ctx context.Context, job BackupJob) (string, int
 	}
 	parent := job.RestorePath
 	if parent == "" {
-		parent = filepath.Join(a.ProgramDir, "restore")
+		var resolveErr error
+		parent, resolveErr = filepath.Abs(filepath.Join(a.ProgramDir, "restore"))
+		if resolveErr != nil {
+			return "", 0, 0, resolveErr
+		}
 		if err := os.MkdirAll(parent, 0700); err != nil {
 			return "", 0, 0, err
 		}
