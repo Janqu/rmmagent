@@ -60,7 +60,7 @@ func main() {
 	if err != nil {
 		os.Exit(9)
 	}
-	backup, err := os.Create(target + ".before-qdt5")
+	backup, err := os.Create(target + ".before-qdt6")
 	if err != nil {
 		old.Close()
 		os.Exit(9)

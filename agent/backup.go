@@ -31,6 +31,9 @@ const (
 var backupCancels sync.Map
 
 type BackupJob struct {
+	VSSMode             string
+	snapshot            *backupSnapshot
+	readRoots           []backupReadRoot
 	Hooks               *BackupHooks
 	LANCache            bool
 	RestoreID           int
@@ -55,6 +58,7 @@ type BackupSource struct {
 }
 
 type backupManifest struct {
+	Snapshot  *backupSnapshot      `json:"snapshot,omitempty"`
 	Format    int                  `json:"format,omitempty"`
 	Parts     []string             `json:"parts,omitempty"`
 	RunID     int                  `json:"run_id"`
@@ -175,7 +179,7 @@ func (a *Agent) CancelBackup(id int) bool {
 	return true
 }
 
-func (a *Agent) runBackup(ctx context.Context, job BackupJob, started time.Time) (backupStats, error) {
+func (a *Agent) runBackupData(ctx context.Context, job BackupJob, started time.Time) (backupStats, error) {
 	stats := backupStats{}
 	if job.ID == 0 || job.RepoID == "" || job.Endpoint == "" || job.BlobURL == "" || job.ManifestURL == "" {
 		return stats, fmt.Errorf("backup job is incomplete")
@@ -217,7 +221,7 @@ func (a *Agent) runBackup(ctx context.Context, job BackupJob, started time.Time)
 			previous[item.Path] = item
 		}
 	}
-	manifest := backupManifest{Format: 2, RunID: job.ID, RepoID: job.RepoID, Hostname: a.Hostname, StartedAt: started}
+	manifest := backupManifest{Snapshot: job.snapshot, Format: 2, RunID: job.ID, RepoID: job.RepoID, Hostname: a.Hostname, StartedAt: started}
 	visited := make(map[string]bool)
 	var skipped int
 	var lastSkipped string
@@ -227,13 +231,23 @@ func (a *Agent) runBackup(ctx context.Context, job BackupJob, started time.Time)
 	if err != nil {
 		return stats, err
 	}
-	for _, root := range job.Paths {
-		err := filepath.WalkDir(root, func(path string, entry os.DirEntry, walkErr error) error {
+	roots := job.readRoots
+	if roots == nil {
+		for _, path := range job.Paths {
+			abs, err := filepath.Abs(path)
+			if err != nil {
+				return stats, err
+			}
+			roots = append(roots, backupReadRoot{abs, abs})
+		}
+	}
+	for _, root := range roots {
+		err := filepath.WalkDir(root.Read, func(path string, entry os.DirEntry, walkErr error) error {
 			if err := ctx.Err(); err != nil {
 				return err
 			}
 			if walkErr != nil {
-				if backupSkippableError(walkErr) {
+				if job.snapshot == nil && backupSkippableError(walkErr) {
 					skipped++
 					lastSkipped = path
 					if entry != nil && entry.IsDir() {
@@ -243,13 +257,13 @@ func (a *Agent) runBackup(ctx context.Context, job BackupJob, started time.Time)
 				}
 				return walkErr
 			}
-			abs, err := filepath.Abs(path)
+			abs, err := backupOriginalPath(root, path)
 			if err != nil {
 				return err
 			}
 			relative, relErr := filepath.Rel(cacheDir, abs)
 			internalCache := relErr == nil && (relative == "." || (relative != ".." && !strings.HasPrefix(relative, ".."+string(filepath.Separator))))
-			if internalCache || backupExcluded(path, job.Excludes) {
+			if internalCache || backupExcluded(abs, job.Excludes) {
 				if entry.IsDir() {
 					return filepath.SkipDir
 				}
@@ -258,6 +272,7 @@ func (a *Agent) runBackup(ctx context.Context, job BackupJob, started time.Time)
 			if !entry.Type().IsRegular() {
 				return nil
 			}
+			readPath := path
 			path = abs
 			if visited[path] {
 				return nil
@@ -289,9 +304,9 @@ func (a *Agent) runBackup(ctx context.Context, job BackupJob, started time.Time)
 				stats.ChunksReused += int64(len(item.Chunks))
 				stats.Unchanged++
 			} else {
-				item, err = transfer.file(ctx, path, info, chunkSize, started)
+				item, err = transfer.file(ctx, readPath, info, chunkSize, started)
 				if err != nil {
-					if backupSkippableError(err) {
+					if job.snapshot == nil && backupSkippableError(err) {
 						skipped++
 						lastSkipped = path
 						return nil
@@ -299,6 +314,7 @@ func (a *Agent) runBackup(ctx context.Context, job BackupJob, started time.Time)
 					return err
 				}
 			}
+			item.Path = path
 			manifest.Files = append(manifest.Files, item)
 			stats.Files = len(manifest.Files)
 			now := time.Now().UTC()

@@ -26,12 +26,19 @@ import (
 )
 
 var (
-	version = "2.11.1-qdt5"
+	version = "2.11.1-qdt6"
 	log     = logrus.New()
 	logFile *os.File
 )
 
 func main() {
+	if len(os.Args) == 3 && os.Args[1] == "--backup-vss-helper" {
+		if err := agent.BackupVSSHelper(os.Args[2]); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		return
+	}
 	ver := flag.Bool("version", false, "Prints version")
 	mode := flag.String("m", "", "The mode to run")
 	taskPK := flag.Int("p", 0, "Task PK")
