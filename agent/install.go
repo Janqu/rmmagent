@@ -56,6 +56,14 @@ type Installer struct {
 	TmpDir           string
 }
 
+type installerBootstrap struct {
+	Site           int    `json:"site"`
+	MonitoringType string `json:"monitoring_type"`
+	Power          bool   `json:"power"`
+	RDP            bool   `json:"rdp"`
+	Ping           bool   `json:"ping"`
+}
+
 func (a *Agent) Install(i *Installer) {
 	if runtime.GOOS == "linux" {
 		if _, err := os.Stat(etcConfig); err == nil {
@@ -124,12 +132,28 @@ func (a *Agent) Install(i *Installer) {
 		iClient.SetTLSClientConfig(insecureConf)
 	}
 
-	creds, cerr := iClient.R().Get(fmt.Sprintf("%s/api/v3/installer/", baseURL))
+	installerInfo := &installerBootstrap{}
+	creds, cerr := iClient.R().SetResult(installerInfo).Get(fmt.Sprintf("%s/api/v3/installer/", baseURL))
 	if cerr != nil {
 		a.installerMsg(cerr.Error(), "error", i.Silent)
 	}
 	if creds.StatusCode() == 401 {
 		a.installerMsg("Installer token has expired. Please generate a new one.", "error", i.Silent)
+	}
+	if creds.StatusCode() != 200 {
+		a.installerMsg(DjangoStringResp(creds.String()), "error", i.Silent)
+	}
+	if i.SiteID == 0 {
+		i.SiteID = installerInfo.Site
+	}
+	if i.AgentType == "" {
+		i.AgentType = installerInfo.MonitoringType
+	}
+	i.Power = i.Power || installerInfo.Power
+	i.RDP = i.RDP || installerInfo.RDP
+	i.Ping = i.Ping || installerInfo.Ping
+	if i.SiteID == 0 || (i.AgentType != "server" && i.AgentType != "workstation") {
+		a.installerMsg("Installer token does not include a valid site and agent type.", "error", i.Silent)
 	}
 
 	verPayload := map[string]string{"version": a.Version}
@@ -186,11 +210,11 @@ func (a *Agent) Install(i *Installer) {
 
 	var meshNodeID, meshOutput string
 
-	if !i.NoMesh && runtime.GOOS != "linux" {
+	if !i.NoMesh {
 		switch runtime.GOOS {
 		case "windows":
 			meshOutput = filepath.Join(a.ProgramDir, a.MeshInstaller)
-		case "darwin":
+		case "darwin", "linux":
 			tmp, err := createNixTmpFile(a.UnixTmpDir)
 			if err != nil {
 				a.Logger.Fatalln("Failed to create mesh temp file", err)
@@ -201,41 +225,62 @@ func (a *Agent) Install(i *Installer) {
 			defer os.Remove(meshOutput + ".msh")
 		}
 
-		if runtime.GOOS == "windows" && i.LocalMesh != "" {
-			err := copyFile(i.LocalMesh, meshOutput)
-			if err != nil {
-				a.installerMsg(err.Error(), "error", i.Silent)
+		if meshOutput != "" {
+			if runtime.GOOS == "windows" && i.LocalMesh != "" {
+				err := copyFile(i.LocalMesh, meshOutput)
+				if err != nil {
+					a.installerMsg(err.Error(), "error", i.Silent)
+				}
+			} else {
+				a.Logger.Infoln("Downloading mesh agent...")
+				payload := map[string]string{"goarch": a.GoArch, "plat": a.Platform}
+				r, err := rClient.R().SetBody(payload).SetOutput(meshOutput).Post(fmt.Sprintf("%s/api/v3/meshexe/", baseURL))
+				if err != nil {
+					a.installerMsg(fmt.Sprintf("Failed to download mesh agent: %s", err.Error()), "error", i.Silent)
+				}
+				if r.StatusCode() != 200 {
+					a.installerMsg(fmt.Sprintf("Unable to download the mesh agent from the RMM. %s", r.String()), "error", i.Silent)
+				}
+				meshSHA := r.Header().Get("X-Mesh-Agent-SHA256")
+				if err := verifySHA256(meshOutput, meshSHA); err != nil {
+					a.installerMsg(fmt.Sprintf("Mesh agent integrity check failed: %s", err.Error()), "error", i.Silent)
+				}
+				a.rememberMeshInstallerSHA(meshSHA)
 			}
-		} else {
-			a.Logger.Infoln("Downloading mesh agent...")
-			payload := map[string]string{"goarch": a.GoArch, "plat": a.Platform}
-			r, err := rClient.R().SetBody(payload).SetOutput(meshOutput).Post(fmt.Sprintf("%s/api/v3/meshexe/", baseURL))
-			if err != nil {
-				a.installerMsg(fmt.Sprintf("Failed to download mesh agent: %s", err.Error()), "error", i.Silent)
-			}
-			if r.StatusCode() != 200 {
-				a.installerMsg(fmt.Sprintf("Unable to download the mesh agent from the RMM. %s", r.String()), "error", i.Silent)
-			}
-		}
 
-		a.Logger.Infoln("Installing mesh agent...")
-		a.Logger.Debugln("Mesh agent:", meshOutput)
-		time.Sleep(1 * time.Second)
+			a.Logger.Infoln("Installing mesh agent...")
+			a.Logger.Debugln("Mesh agent:", meshOutput)
+			time.Sleep(1 * time.Second)
 
-		if runtime.GOOS == "windows" {
-			meshNodeID, err = a.installMesh(meshOutput, installerMeshSystemEXE, i.Proxy)
-			if err != nil {
-				a.installerMsg(fmt.Sprintf("Failed to install mesh agent: %s", err.Error()), "error", i.Silent)
+			if runtime.GOOS == "windows" {
+				meshNodeID, err = a.installMesh(meshOutput, installerMeshSystemEXE, i.Proxy)
+				if err != nil {
+					a.installerMsg(fmt.Sprintf("Failed to install mesh agent: %s", err.Error()), "error", i.Silent)
+				}
+			} else {
+				if runtime.GOOS == "linux" {
+					a.ensureMeshClipboardTools()
+				}
+				fakeDisplay := []string{"XAUTHORITY=foo", "DISPLAY=bar", "LC_ALL=en_US.UTF-8", "LANGUAGE=en_US"}
+				if trmm.FileExists(installerMeshSystemEXE) {
+					uopts := a.NewCMDOpts()
+					uopts.Command = fmt.Sprintf("%s -uninstall", installerMeshSystemEXE)
+					uopts.Timeout = i.Timeout
+					uopts.EnvVars = fakeDisplay
+					a.CmdV2(uopts)
+					time.Sleep(1 * time.Second)
+				}
+				opts := a.NewCMDOpts()
+				opts.Command = fmt.Sprintf("%s -install --installPath=%s", meshOutput, nixMeshDir)
+				opts.Timeout = i.Timeout
+				opts.EnvVars = fakeDisplay
+				out := a.CmdV2(opts)
+				if out.Status.Exit != 0 {
+					a.Logger.Fatalln("Error installing mesh agent:", out.Stderr)
+				}
+				fmt.Println(out.Stdout)
+				meshNodeID = StripAll(a.NixMeshNodeID())
 			}
-		} else {
-			opts := a.NewCMDOpts()
-			opts.Command = fmt.Sprintf("%s -install --installPath=%s", meshOutput, nixMeshDir)
-			opts.Timeout = i.Timeout
-			out := a.CmdV2(opts)
-			if out.Status.Exit != 0 {
-				a.Logger.Fatalln("Error installing mesh agent:", out.Stderr)
-			}
-			fmt.Println(out.Stdout)
 		}
 	}
 
@@ -525,22 +570,29 @@ func downloadFileAtomic(client *resty.Client, url, destination string) error {
 	return nil
 }
 
-func verifySHA256(path, expected string) error {
-	expected = strings.TrimSpace(strings.ToLower(expected))
-	if expected == "" {
-		return nil
-	}
+func fileSHA256(path string) (string, error) {
 	f, err := os.Open(path)
 	if err != nil {
-		return fmt.Errorf("open file for sha256: %w", err)
+		return "", fmt.Errorf("open file for sha256: %w", err)
 	}
 	defer f.Close()
 
 	h := sha256.New()
 	if _, err := io.Copy(h, f); err != nil {
-		return fmt.Errorf("hash file: %w", err)
+		return "", fmt.Errorf("hash file: %w", err)
 	}
-	got := hex.EncodeToString(h.Sum(nil))
+	return hex.EncodeToString(h.Sum(nil)), nil
+}
+
+func verifySHA256(path, expected string) error {
+	expected = strings.TrimSpace(strings.ToLower(expected))
+	if expected == "" {
+		return nil
+	}
+	got, err := fileSHA256(path)
+	if err != nil {
+		return err
+	}
 	if got != expected {
 		return fmt.Errorf("sha256 mismatch: got %s want %s", got, expected)
 	}

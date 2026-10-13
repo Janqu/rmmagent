@@ -19,6 +19,7 @@ import (
 	"os/user"
 	"path/filepath"
 	"runtime"
+	"time"
 
 	"github.com/Janqu/qdt-rmm-agent/agent"
 	"github.com/kardianos/service"
@@ -26,7 +27,7 @@ import (
 )
 
 var (
-	version = "2.11.1-qdt6"
+	version = "2.11.1-qdt7"
 	log     = logrus.New()
 	logFile *os.File
 )
@@ -49,7 +50,7 @@ func main() {
 	siteID := flag.Int("site-id", 0, "Site ID")
 	timeout := flag.Duration("timeout", 900, "Installer timeout (seconds)")
 	desc := flag.String("desc", "", "Agent's Description")
-	atype := flag.String("agent-type", "server", "server or workstation")
+	atype := flag.String("agent-type", "", "server or workstation")
 	token := flag.String("auth", "", "Token")
 	power := flag.Bool("power", false, "Disable sleep/hibernate")
 	rdp := flag.Bool("rdp", false, "Enable RDP")
@@ -99,6 +100,9 @@ func main() {
 		fmt.Print(a.NixMeshNodeID())
 	case "installsvc":
 		a.InstallService()
+	case "installui":
+		requireInstallUser()
+		runInstallerUI(&a, installerUIOptions{API: *api, Token: *token, Timeout: *timeout, Silent: *silent, Insecure: *insecure})
 	case "checkin":
 		a.DoNatsCheckIn()
 	case "rpc":
@@ -190,17 +194,9 @@ func main() {
 		}
 		a.RunTask(*taskPK, true)
 	case "install":
-		if runtime.GOOS != "windows" {
-			u, err := user.Current()
-			if err != nil {
-				log.Fatalln(err)
-			}
-			if u.Uid != "0" {
-				log.Fatalln("must run as root")
-			}
-		}
+		requireInstallUser()
 
-		if *api == "" || *clientID == 0 || *siteID == 0 || *token == "" {
+		if *api == "" || *token == "" {
 			return
 		}
 		a.Install(&agent.Installer{
@@ -228,6 +224,27 @@ func main() {
 	default:
 		agent.ShowStatus(version)
 	}
+}
+
+func requireInstallUser() {
+	if runtime.GOOS == "windows" {
+		return
+	}
+	u, err := user.Current()
+	if err != nil {
+		log.Fatalln(err)
+	}
+	if u.Uid != "0" {
+		log.Fatalln("must run as root")
+	}
+}
+
+type installerUIOptions struct {
+	API      string
+	Token    string
+	Timeout  time.Duration
+	Silent   bool
+	Insecure bool
 }
 
 func setupLogging(level, to *string) {
