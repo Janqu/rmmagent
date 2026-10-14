@@ -11,6 +11,19 @@ env CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags "-s -w" -o qdt-rmm-a
 env CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -ldflags "-s -w" -o qdt-rmm-agent-darwin-arm64
 ```
 
+## Headless remote desktop
+
+Windows installers include the signed package from
+`build/qdt-virtual-display/package/`. If no physical monitor is available, the
+agent creates and enables `Root\QDTVirtualDisplay` for the remote session and
+disables it again afterwards.
+
+On headless Linux hosts the agent uses a private, TCP-disabled Xvfb display and
+opens an xterm that can be viewed and controlled through the normal remote
+desktop. Install `Xvfb`, `xauth`, `xterm`, ImageMagick (`import`), `xdotool` and
+`xclip`; the agent reports the exact missing commands instead of modifying the
+host package set itself.
+
 Windows product metadata is defined in `versioninfo.json`. Regenerate the Windows resource
 file for the target architecture with the existing release tooling before building a
 release; a plain Go cross-build alone does not embed those resources or sign the binary.

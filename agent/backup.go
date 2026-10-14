@@ -31,6 +31,7 @@ const (
 var backupCancels sync.Map
 
 type BackupJob struct {
+	VerifyOnly          bool
 	VSSMode             string
 	snapshot            *backupSnapshot
 	readRoots           []backupReadRoot
@@ -52,9 +53,10 @@ type BackupJob struct {
 }
 
 type BackupSource struct {
-	Path  string `json:"path"`
-	Label string `json:"label"`
-	Kind  string `json:"kind"`
+	Path    string `json:"path"`
+	Label   string `json:"label"`
+	Kind    string `json:"kind"`
+	Problem string `json:"problem,omitempty"`
 }
 
 type backupManifest struct {
@@ -96,6 +98,10 @@ func (a *Agent) BackupSources() []BackupSource {
 			backupAddSource(&out, path, path, "folder")
 		}
 	}
+	if backupProxmoxAvailable() {
+		out = append(out, backupProxmoxSources(backupProxmoxConfig)...)
+	}
+	out = append(out, a.backupNativeSources()...)
 	return out
 }
 
@@ -184,6 +190,16 @@ func (a *Agent) runBackupData(ctx context.Context, job BackupJob, started time.T
 	if job.ID == 0 || job.RepoID == "" || job.Endpoint == "" || job.BlobURL == "" || job.ManifestURL == "" {
 		return stats, fmt.Errorf("backup job is incomplete")
 	}
+	for _, path := range job.Paths {
+		if strings.HasPrefix(path, "proxmox:") {
+			if !backupProxmoxSource.MatchString(path) || !backupProxmoxAvailable() {
+				return stats, fmt.Errorf("Proxmox-Backup benötigt eine gültige Gast-ID und einen Linux-Proxmox-Host mit vzdump: %s", path)
+			}
+			if job.VSSMode != "" && job.VSSMode != "off" {
+				return stats, errors.New("Proxmox-Backups unterstützen kein VSS")
+			}
+		}
+	}
 	chunkSize := job.ChunkBytes
 	if chunkSize <= 0 {
 		chunkSize = backupDefaultChunk
@@ -227,13 +243,30 @@ func (a *Agent) runBackupData(ctx context.Context, job BackupJob, started time.T
 	var lastSkipped string
 	lastProgress := time.Now().UTC()
 	a.backupStatus(job.Endpoint, stats.status(job.ID, "running", "", 0))
+	reportProgress := func(path string) {
+		now := time.Now().UTC()
+		if backupProgressDue(now, lastProgress) {
+			lastProgress = now
+			body := stats.status(job.ID, "running", "", 0)
+			body["log_tail"] = path
+			a.backupStatus(job.Endpoint, body)
+		}
+	}
 	cacheDir, err := filepath.Abs(filepath.Join(a.ProgramDir, "backup", "lan-cache"))
 	if err != nil {
 		return stats, err
 	}
 	roots := job.readRoots
 	if roots == nil {
+		seen := make(map[string]bool)
 		for _, path := range job.Paths {
+			if backupExportSource(path) {
+				if !seen[path] {
+					roots = append(roots, backupReadRoot{path, path})
+					seen[path] = true
+				}
+				continue
+			}
 			abs, err := filepath.Abs(path)
 			if err != nil {
 				return stats, err
@@ -242,12 +275,32 @@ func (a *Agent) runBackupData(ctx context.Context, job BackupJob, started time.T
 		}
 	}
 	for _, root := range roots {
+		exported := backupExportSource(root.Read)
+		cleanup := func() error { return nil }
+		if exported {
+			source := root.Read
+			progress := func() {
+				body := stats.status(job.ID, "running", "", 0)
+				body["log_tail"] = "Nativer Export: " + source
+				a.backupStatus(job.Endpoint, body)
+			}
+			progress()
+			var err error
+			if strings.HasPrefix(source, "proxmox:") {
+				root, cleanup, err = backupProxmoxArchive(ctx, source, backupProxmoxConfig, filepath.Join(a.ProgramDir, "backup", "proxmox-staging"), "vzdump", progress)
+			} else {
+				root, cleanup, err = a.backupNativeArchive(ctx, source, progress)
+			}
+			if err != nil {
+				return stats, err
+			}
+		}
 		err := filepath.WalkDir(root.Read, func(path string, entry os.DirEntry, walkErr error) error {
 			if err := ctx.Err(); err != nil {
 				return err
 			}
 			if walkErr != nil {
-				if job.snapshot == nil && backupSkippableError(walkErr) {
+				if !exported && job.snapshot == nil && backupSkippableError(walkErr) {
 					skipped++
 					lastSkipped = path
 					if entry != nil && entry.IsDir() {
@@ -263,7 +316,10 @@ func (a *Agent) runBackupData(ctx context.Context, job BackupJob, started time.T
 			}
 			relative, relErr := filepath.Rel(cacheDir, abs)
 			internalCache := relErr == nil && (relative == "." || (relative != ".." && !strings.HasPrefix(relative, ".."+string(filepath.Separator))))
-			if internalCache || backupExcluded(abs, job.Excludes) {
+			nativeDir := filepath.Join(a.ProgramDir, "backup")
+			nativeRel, nativeErr := filepath.Rel(nativeDir, abs)
+			nativeInternal := nativeErr == nil && (nativeRel == "." || (nativeRel != ".." && !strings.HasPrefix(nativeRel, ".."+string(filepath.Separator))))
+			if internalCache || (!exported && (nativeInternal || backupExcluded(abs, job.Excludes))) {
 				if entry.IsDir() {
 					return filepath.SkipDir
 				}
@@ -274,10 +330,13 @@ func (a *Agent) runBackupData(ctx context.Context, job BackupJob, started time.T
 			}
 			readPath := path
 			path = abs
-			if visited[path] {
+			if priorExport, seen := visited[path]; seen {
+				if exported || priorExport {
+					return fmt.Errorf("Backup-Pfad kollidiert mit einem nativen Archiv: %s; Datei- und Export-Quellen in getrennten Profilen sichern", path)
+				}
 				return nil
 			}
-			visited[path] = true
+			visited[path] = exported
 			info, err := entry.Info()
 			if err != nil {
 				return err
@@ -304,9 +363,9 @@ func (a *Agent) runBackupData(ctx context.Context, job BackupJob, started time.T
 				stats.ChunksReused += int64(len(item.Chunks))
 				stats.Unchanged++
 			} else {
-				item, err = transfer.file(ctx, readPath, info, chunkSize, started)
+				item, err = transfer.file(ctx, readPath, info, chunkSize, started, func() { reportProgress(path) })
 				if err != nil {
-					if job.snapshot == nil && backupSkippableError(err) {
+					if !exported && job.snapshot == nil && backupSkippableError(err) {
 						skipped++
 						lastSkipped = path
 						return nil
@@ -317,15 +376,10 @@ func (a *Agent) runBackupData(ctx context.Context, job BackupJob, started time.T
 			item.Path = path
 			manifest.Files = append(manifest.Files, item)
 			stats.Files = len(manifest.Files)
-			now := time.Now().UTC()
-			if backupProgressDue(now, lastProgress) {
-				lastProgress = now
-				body := stats.status(job.ID, "running", "", 0)
-				body["log_tail"] = path
-				a.backupStatus(job.Endpoint, body)
-			}
+			reportProgress(path)
 			return nil
 		})
+		err = errors.Join(err, cleanup())
 		if err != nil {
 			return stats, err
 		}
@@ -341,7 +395,7 @@ func (a *Agent) runBackupData(ctx context.Context, job BackupJob, started time.T
 	return stats, nil
 }
 
-func (b *backupTransfer) file(ctx context.Context, path string, info os.FileInfo, chunkSize int, verified time.Time) (backupManifestFile, error) {
+func (b *backupTransfer) file(ctx context.Context, path string, info os.FileInfo, chunkSize int, verified time.Time, progress func()) (backupManifestFile, error) {
 	item := backupManifestFile{Path: path, Size: info.Size(), Mode: uint32(info.Mode()), ModTime: info.ModTime().UTC(), VerifiedAt: verified}
 	file, err := os.Open(path)
 	if err != nil {
@@ -379,6 +433,9 @@ func (b *backupTransfer) file(ctx context.Context, path string, info os.FileInfo
 		chunks = nil
 		ids = nil
 		buffered = 0
+		if progress != nil {
+			progress()
+		}
 		return nil
 	}
 	err = backupChunks(ctx, file, chunkSize, func(chunk []byte) error {
@@ -420,10 +477,21 @@ func (a *Agent) RunBackupRestore(job BackupJob) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	if job.RestoreID != 0 {
-		backupRestoreCancels.Store(job.RestoreID, cancel)
+		if _, loaded := backupRestoreCancels.LoadOrStore(job.RestoreID, context.CancelFunc(cancel)); loaded {
+			return
+		}
 		defer backupRestoreCancels.Delete(job.RestoreID)
 	}
-	path, files, size, err := a.restoreSnapshot(ctx, job)
+	var path string
+	var files, size int64
+	var err error
+	if job.VerifyOnly {
+		verifyCtx, stop := context.WithTimeout(ctx, 23*time.Hour)
+		defer stop()
+		files, size, err = a.verifyBackupSnapshot(verifyCtx, job)
+	} else {
+		path, files, size, err = a.restoreSnapshot(ctx, job)
+	}
 	state, message := "success", ""
 	if err != nil {
 		state, message = "failed", err.Error()
@@ -506,49 +574,7 @@ func (b *backupTransfer) restoreFile(ctx context.Context, root string, item back
 var backupRepoPattern = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
 
 func (a *Agent) backupRepoKey(repoID string, create bool) ([]byte, error) {
-	if !backupRepoPattern.MatchString(repoID) {
-		return nil, fmt.Errorf("invalid backup repository ID")
-	}
-	dir := filepath.Join(a.ProgramDir, "backup")
-	if err := os.MkdirAll(dir, 0700); err != nil {
-		return nil, err
-	}
-	path := filepath.Join(dir, repoID+".key")
-	key, err := os.ReadFile(path)
-	if err == nil {
-		if len(key) != 32 {
-			return nil, fmt.Errorf("invalid existing backup key; refusing to replace it")
-		}
-		return key, nil
-	}
-	if !os.IsNotExist(err) {
-		return nil, err
-	}
-	if !create {
-		return nil, fmt.Errorf("backup encryption key is missing; restore the original key")
-	}
-	key = make([]byte, 32)
-	if _, err := rand.Read(key); err != nil {
-		return nil, err
-	}
-	file, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
-	if os.IsExist(err) {
-		return a.backupRepoKey(repoID, false)
-	}
-	if err != nil {
-		return nil, err
-	}
-	defer file.Close()
-	if _, err := file.Write(key); err != nil {
-		return nil, err
-	}
-	if err := file.Sync(); err != nil {
-		return nil, err
-	}
-	if err := file.Close(); err != nil {
-		return nil, err
-	}
-	return key, nil
+	return a.backupStoredKey(repoID, create, nil)
 }
 
 func backupSubkeys(master []byte, repoID string) ([]byte, []byte) {

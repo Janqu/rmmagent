@@ -338,6 +338,9 @@ type CheckInfo struct {
 }
 
 type Check struct {
+	HardwareConfig struct {
+		Kind string `json:"kind"`
+	} `json:"hardware_config"`
 	Script                 Script         `json:"script"`
 	AssignedTasks          []AssignedTask `json:"assigned_tasks"`
 	CheckPK                int            `json:"id"`
@@ -1142,4 +1145,61 @@ type Win32_VideoController struct {
 	TimeOfLastReset           time.Time
 	VideoModeDescription      string
 	VideoProcessor            string
+}
+
+// USBDevice is a live USB device reported by the Windows or Linux agent.
+type USBDevice struct {
+	Name          string `json:"name"`
+	InstanceID    string `json:"instance_id"`
+	Location      string `json:"location"`
+	PortKey       string `json:"port_key"`
+	Status        string `json:"status"`
+	Manufacturer  string `json:"manufacturer"`
+	Description   string `json:"description"`
+	Class         string `json:"class"`
+	Service       string `json:"service"`
+	VendorID      string `json:"vendor_id"`
+	ProductID     string `json:"product_id"`
+	Serial        string `json:"serial"`
+	Storage       bool   `json:"storage"`
+	Enabled       bool   `json:"enabled"`
+	PolicyAllowed bool   `json:"policy_allowed"`
+	PolicyBlocked bool   `json:"policy_blocked"`
+}
+
+// USBPolicy rules match an instance ID, a port key or a VID/PID fragment and
+// may contain * wildcards, so a replacement stick of the same model stays
+// allowed without re-adding its serial.
+type USBPolicy struct {
+	DefaultAllowed bool     `json:"default_allowed"`
+	AllowedDevices []string `json:"allowed_devices"`
+	AllowedPorts   []string `json:"allowed_ports"`
+	BlockedDevices []string `json:"blocked_devices"`
+	WriteProtect   bool     `json:"write_protect"`
+}
+
+// USBListResp is the agent reply for usb_list.
+type USBListResp struct {
+	Devices          []USBDevice `json:"devices"`
+	StorageBlocked   bool        `json:"storage_blocked"`
+	WriteProtect     bool        `json:"write_protect"`
+	WriteProtectable bool        `json:"write_protectable"`
+	Policy           USBPolicy   `json:"policy"`
+}
+
+// USBEvent is one USB connect/remove/block observed by the agent monitor and
+// posted to /api/v3/usbevents/.
+type USBEvent struct {
+	Action       string `json:"action"`
+	InstanceID   string `json:"instance_id"`
+	Name         string `json:"name"`
+	VendorID     string `json:"vendor_id"`
+	ProductID    string `json:"product_id"`
+	Serial       string `json:"serial"`
+	PortKey      string `json:"port_key"`
+	Class        string `json:"class"`
+	Manufacturer string `json:"manufacturer"`
+	Storage      bool   `json:"storage"`
+	Allowed      bool   `json:"allowed"`
+	ErrorMsg     string `json:"errormsg,omitempty"`
 }

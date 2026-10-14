@@ -31,16 +31,20 @@ func linuxTemperatureInventory() []rmm.TemperatureSensorInventory {
 }
 
 func linuxHwmonTemperatures() []rmm.TemperatureSensorInventory {
-	hwmons, err := os.ReadDir("/sys/class/hwmon")
+	return linuxHwmonTemperaturesAt("/sys/class/hwmon")
+}
+
+func linuxHwmonTemperaturesAt(root string) []rmm.TemperatureSensorInventory {
+	hwmons, err := os.ReadDir(root)
 	if err != nil {
 		return nil
 	}
 	var sensors []rmm.TemperatureSensorInventory
 	for _, hwmon := range hwmons {
-		if !hwmon.IsDir() {
+		if info, err := os.Stat(filepath.Join(root, hwmon.Name())); err != nil || !info.IsDir() {
 			continue
 		}
-		dir := filepath.Join("/sys/class/hwmon", hwmon.Name())
+		dir := filepath.Join(root, hwmon.Name())
 		chip := readFirstLine(filepath.Join(dir, "name"))
 		entries, err := os.ReadDir(dir)
 		if err != nil {
@@ -52,7 +56,7 @@ func linuxHwmonTemperatures() []rmm.TemperatureSensorInventory {
 				continue
 			}
 			raw := readFirstLine(filepath.Join(dir, name))
-			celsius, ok := parseMilliCelsius(raw)
+			celsius, ok := parseSysfsTemperature(raw)
 			if !ok {
 				continue
 			}
@@ -71,12 +75,12 @@ func linuxThermalZoneTemperatures() []rmm.TemperatureSensorInventory {
 	}
 	var sensors []rmm.TemperatureSensorInventory
 	for _, zone := range zones {
-		if !zone.IsDir() || !strings.HasPrefix(zone.Name(), "thermal_zone") {
+		if info, err := os.Stat(filepath.Join("/sys/class/thermal", zone.Name())); err != nil || !info.IsDir() || !strings.HasPrefix(zone.Name(), "thermal_zone") {
 			continue
 		}
 		dir := filepath.Join("/sys/class/thermal", zone.Name())
 		raw := readFirstLine(filepath.Join(dir, "temp"))
-		celsius, ok := parseMilliCelsius(raw)
+		celsius, ok := parseSysfsTemperature(raw)
 		if !ok {
 			continue
 		}

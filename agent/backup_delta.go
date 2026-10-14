@@ -10,10 +10,22 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"sync"
 )
 
 const backupObjectV2 = "QDTBKP02"
 const backupManifestLimit = 256 << 20
+
+type backupCompressor struct {
+	buffer bytes.Buffer
+	writer *zlib.Writer
+}
+
+var backupCompressionWriters = sync.Pool{New: func() any {
+	c := new(backupCompressor)
+	c.writer, _ = zlib.NewWriterLevel(&c.buffer, zlib.BestSpeed) // Constant, valid compression level.
+	return c
+}}
 
 type backupStats struct {
 	Files          int   `json:"files"`
@@ -84,11 +96,13 @@ func backupChunks(ctx context.Context, reader io.Reader, limit int, emit func([]
 }
 
 func backupPack(key, aad, data []byte) ([]byte, error) {
-	var compressed bytes.Buffer
-	writer, err := zlib.NewWriterLevel(&compressed, zlib.BestSpeed)
-	if err != nil {
-		return nil, err
-	}
+	compressor := backupCompressionWriters.Get().(*backupCompressor)
+	writer, compressed := compressor.writer, &compressor.buffer
+	writer.Reset(compressed)
+	defer func() {
+		compressor.buffer = bytes.Buffer{} // Release output memory without resetting the encoder twice.
+		backupCompressionWriters.Put(compressor)
+	}()
 	if _, err := writer.Write(data); err != nil {
 		return nil, err
 	}

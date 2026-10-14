@@ -75,6 +75,9 @@ func (a *Agent) AgentSvc(nc *nats.Conn) {
 		time.Sleep(1 * time.Second)
 		a.CleanupAgentUpdates()
 	}
+	if usbControlSupported() {
+		go a.EnforceUSBStoragePolicy()
+	}
 
 	// Windows has GetAgentCheckInConfig() while unix has a stub GetAgentCheckInConfig()
 	conf := a.GetAgentCheckInConfig(a.GetCheckInConfFromAPI())
@@ -98,6 +101,8 @@ func (a *Agent) AgentSvc(nc *nats.Conn) {
 	}
 
 	go a.SyncMeshNodeID(true)
+	go a.ReconcileMesh()
+	go a.ReportMeshHealth()
 
 	time.Sleep(time.Duration(randRange(1, 3)) * time.Second)
 	if runtime.GOOS == "windows" && !conf.LimitData {
@@ -122,8 +127,11 @@ func (a *Agent) AgentSvc(nc *nats.Conn) {
 	syncMeshTicker := time.NewTicker(time.Duration(conf.SyncMesh) * time.Second)
 	extraTicker := a.extraTicker()
 	extraC := tickerChan(extraTicker)
+	usbMonitorTicker := newUSBMonitorTicker()
+	usbC := tickerChan(usbMonitorTicker)
 
 	var syncMeshRunning atomic.Bool
+	var usbMonitorRunning atomic.Bool
 
 	for {
 		select {
@@ -145,10 +153,19 @@ func (a *Agent) AgentSvc(nc *nats.Conn) {
 			if syncMeshRunning.CompareAndSwap(false, true) {
 				go func() {
 					defer syncMeshRunning.Store(false)
+					a.ReconcileMesh()
 					a.SyncMeshNodeID(false)
+					a.ReportMeshHealth()
 				}()
 			} else {
 				a.Logger.Debugln("syncMeshTicker SyncMeshNodeID already running, skipping tick")
+			}
+		case <-usbC:
+			if usbMonitorRunning.CompareAndSwap(false, true) {
+				go func() {
+					defer usbMonitorRunning.Store(false)
+					a.MonitorUSB()
+				}()
 			}
 		case <-extraC:
 			a.runExtra()

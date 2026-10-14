@@ -91,6 +91,9 @@ func (a *Agent) RunChecks(force bool) error {
 
 	for _, check := range data.Checks {
 		switch check.CheckType {
+		case "hardware":
+			wg.Add(1)
+			go func(c rmm.Check) { defer wg.Done(); randomCheckDelay(); a.HardwareCheck(c, a.rClient) }(check)
 		case "diskspace":
 			wg.Add(1)
 			go func(c rmm.Check, wg *sync.WaitGroup, r *resty.Client) {

@@ -33,6 +33,12 @@ var (
 )
 
 func main() {
+	if len(os.Args) == 2 && os.Args[1] == "--remote-desktop-helper" {
+		if err := agent.RunRemoteDesktopHelper(os.Stdin, os.Stdout); err != nil {
+			os.Exit(1)
+		}
+		return
+	}
 	if len(os.Args) == 3 && os.Args[1] == "--backup-vss-helper" {
 		if err := agent.BackupVSSHelper(os.Args[2]); err != nil {
 			fmt.Fprintln(os.Stderr, err)

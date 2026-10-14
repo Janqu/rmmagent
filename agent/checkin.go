@@ -42,16 +42,20 @@ func (a *Agent) NatsMessage(nc *nats.Conn, mode string) {
 		if err != nil {
 			reboot = false
 		}
-		payload = trmm.AgentInfoNats{
-			Agentid:      a.AgentID,
-			Username:     a.LoggedOnUser(),
-			Hostname:     a.Hostname,
-			OS:           osinfo,
-			Platform:     runtime.GOOS,
-			TotalRAM:     a.TotalRAM(),
-			BootTime:     a.BootTime(),
-			RebootNeeded: reboot,
-			GoArch:       a.GoArch,
+		// Map (not trmm.AgentInfoNats) so we can attach optional mesh without
+		// forking trmm-shared; natsapi ignores unknown fields, agentbus stores mesh.
+		payload = map[string]interface{}{
+			"agent_id":           a.AgentID,
+			"logged_in_username": a.LoggedOnUser(),
+			"hostname":           a.Hostname,
+			"operating_system":   osinfo,
+			"plat":               runtime.GOOS,
+			"total_ram":          a.TotalRAM(),
+			"boot_time":          a.BootTime(),
+			"needs_reboot":       reboot,
+			"goarch":             a.GoArch,
+			"mesh":               a.meshHealthCheckin(),
+			"remote_control":     a.remoteControlCheckin(),
 		}
 	case "agent-wmi":
 		payload = trmm.WinWMINats{

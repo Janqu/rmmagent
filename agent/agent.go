@@ -92,6 +92,9 @@ type Agent struct {
 	TerminalSessions       map[string]*TerminalSession
 	TerminalSessionsMu     sync.Mutex
 	PendingTerminalResizes map[string]PendingTerminalResize
+	meshLastReinstall      time.Time
+	meshReconcileMu        sync.Mutex
+	usbSnapshot            []rmm.USBDevice
 }
 
 const (
@@ -128,6 +131,9 @@ func New(logger *logrus.Logger, version string) *Agent {
 	}
 	pd := filepath.Join(os.Getenv("ProgramFiles"), progFilesName)
 	exe := filepath.Join(pd, winExeName)
+	if runtime.GOOS != "windows" {
+		pd, exe = nixAgentDir, nixAgentBin
+	}
 	sd := os.Getenv("SystemDrive")
 	winTempDir := defaultWinTmpDir
 	winRunAsUserTmpDir := defaultWinTmpDir
@@ -1207,10 +1213,31 @@ func (a *Agent) SendTerminalError(agentID, sessionID, message string, nc *nats.C
 }
 
 func (a *Agent) ReinstallMesh() {
-	if runtime.GOOS != "windows" {
+	var meshOutput string
+	var cleanup func()
+	switch runtime.GOOS {
+	case "windows":
+		meshOutput = filepath.Join(a.ProgramDir, a.MeshInstaller)
+	case "linux", "darwin":
+		tmp, err := createNixTmpFile(a.UnixTmpDir)
+		if err != nil {
+			a.Logger.Errorln("ReinstallMesh() temp file:", err)
+			return
+		}
+		meshOutput = tmp.Name()
+		_ = tmp.Close()
+		cleanup = func() {
+			os.Remove(meshOutput)
+			os.Remove(meshOutput + ".msh")
+		}
+	default:
+		a.Logger.Debugln("ReinstallMesh(): unsupported platform", runtime.GOOS)
 		return
 	}
-	meshOutput := filepath.Join(a.ProgramDir, a.MeshInstaller)
+	if cleanup != nil {
+		defer cleanup()
+	}
+
 	url := fmt.Sprintf("/api/v3/%s/meshreinstall/", a.AgentID)
 	r, err := a.rClient.R().SetOutput(meshOutput).Get(url)
 	if err != nil {
@@ -1221,18 +1248,34 @@ func (a *Agent) ReinstallMesh() {
 		a.Logger.Errorln("ReinstallMesh() status code:", r.StatusCode())
 		return
 	}
-	_, err = CMD(meshOutput, []string{"-fulluninstall"}, int(30), false)
-	if err != nil {
-		a.Logger.Errorln("ReinstallMesh() uninstall:", err)
+	meshSHA := strings.TrimSpace(strings.ToLower(r.Header().Get("X-Mesh-Agent-SHA256")))
+	if err := verifySHA256(meshOutput, meshSHA); err != nil {
+		a.Logger.Errorln("ReinstallMesh() integrity:", err)
+		return
 	}
-	time.Sleep(2 * time.Second)
-	err = os.RemoveAll(filepath.Dir(a.MeshSystemEXE))
-	if err != nil {
-		a.Logger.Errorln("ReinstallMesh() RemoveAll:", err)
+	a.rememberMeshInstallerSHA(meshSHA)
+
+	if runtime.GOOS == "windows" {
+		_, err = CMD(meshOutput, []string{"-fulluninstall"}, int(30), false)
+		if err != nil {
+			a.Logger.Errorln("ReinstallMesh() uninstall:", err)
+		}
+		time.Sleep(2 * time.Second)
+		err = os.RemoveAll(filepath.Dir(a.MeshSystemEXE))
+		if err != nil {
+			a.Logger.Errorln("ReinstallMesh() RemoveAll:", err)
+		}
+		time.Sleep(1 * time.Second)
+		_, err = a.installMesh(meshOutput, a.MeshSystemEXE, a.Proxy)
+		if err != nil {
+			a.Logger.Errorln("ReinstallMesh() installMesh:", err)
+		}
+		return
 	}
-	time.Sleep(1 * time.Second)
-	_, err = a.installMesh(meshOutput, a.MeshSystemEXE, a.Proxy)
-	if err != nil {
-		a.Logger.Errorln("ReinstallMesh() installMesh:", err)
+
+	if err := os.Chmod(meshOutput, 0755); err != nil {
+		a.Logger.Errorln("ReinstallMesh() chmod:", err)
+		return
 	}
+	a.reinstallMeshNix(meshOutput)
 }

@@ -40,6 +40,11 @@ func (a *Agent) runBackup(ctx context.Context, job BackupJob, started time.Time)
 	if job.VSSMode != "required" {
 		return stats, errors.New("Unbekannter VSS-Modus; Sicherung abgelehnt.")
 	}
+	for _, path := range job.Paths {
+		if backupExportSource(path) {
+			return stats, errors.New("Native Exporte benötigen VSS-Modus off; sie erstellen ihre eigene konsistente Sicherung")
+		}
+	}
 	report := func(snapshot *backupSnapshot) {
 		body := stats.status(job.ID, "running", "", 0)
 		body["vss_result"] = snapshot

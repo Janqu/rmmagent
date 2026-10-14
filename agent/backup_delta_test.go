@@ -2,6 +2,7 @@ package agent
 
 import (
 	"bytes"
+	"compress/zlib"
 	"context"
 	"encoding/base64"
 	"encoding/json"
@@ -211,11 +212,13 @@ func TestBackupDeltaEndToEnd(t *testing.T) {
 		t.Fatal(err)
 	}
 
- originalProgramDir:=a.ProgramDir
- t.Chdir(originalProgramDir)
- a.ProgramDir=""
- if restored,_,_,err:=a.restoreSnapshot(context.Background(),job);err!=nil || !filepath.IsAbs(restored){t.Fatalf("Unix default restore destination: %q %v",restored,err)}
- a.ProgramDir=originalProgramDir
+	originalProgramDir := a.ProgramDir
+	t.Chdir(originalProgramDir)
+	a.ProgramDir = ""
+	if restored, _, _, err := a.restoreSnapshot(context.Background(), job); err != nil || !filepath.IsAbs(restored) {
+		t.Fatalf("Unix default restore destination: %q %v", restored, err)
+	}
+	a.ProgramDir = originalProgramDir
 
 	transfer, original, err := a.backupSnapshot(context.Background(), job)
 	if err != nil {
@@ -292,4 +295,116 @@ func BenchmarkBackupDeltaChunking(b *testing.B) {
 			b.Fatal(err)
 		}
 	}
+}
+
+func BenchmarkBackupPack(b *testing.B) {
+	key := bytes.Repeat([]byte{7}, 32)
+	for _, random := range []bool{false, true} {
+		data := bytes.Repeat([]byte("backup-content-"), 16384)
+		name := "compressible"
+		if random {
+			name = "random"
+			rand.New(rand.NewSource(31)).Read(data)
+		}
+		for _, variant := range []struct {
+			name string
+			pack func([]byte, []byte, []byte) ([]byte, error)
+		}{{"fresh", backupPackUnpooledForBenchmark}, {"pooled", backupPack}} {
+			b.Run(name+"/"+variant.name, func(b *testing.B) {
+				b.SetBytes(int64(len(data)))
+				b.ReportAllocs()
+				b.ResetTimer()
+				for i := 0; i < b.N; i++ {
+					if _, err := variant.pack(key, []byte("benchmark"), data); err != nil {
+						b.Fatal(err)
+					}
+				}
+			})
+		}
+	}
+}
+
+func TestBackupCompressionReuse(t *testing.T) {
+	for worker := 0; worker < 8; worker++ {
+		t.Run(fmt.Sprint(worker), func(t *testing.T) {
+			t.Parallel()
+			key := bytes.Repeat([]byte{byte(worker + 1)}, 32)
+			for i := 0; i < 8; i++ {
+				plain := bytes.Repeat([]byte{byte(worker + i)}, 32<<10)
+				if i%2 == 0 {
+					rand.New(rand.NewSource(int64(worker*8 + i))).Read(plain)
+				}
+				aad := []byte(fmt.Sprintf("%d:%d", worker, i))
+				sealed, err := backupPack(key, aad, plain)
+				if err != nil {
+					t.Fatal(err)
+				}
+				got, err := backupUnpack(key, aad, sealed)
+				if err != nil || !bytes.Equal(got, plain) {
+					t.Fatal("pooled compression mixed block contents", err)
+				}
+			}
+		})
+	}
+}
+
+func TestBackupFileProgress(t *testing.T) {
+	data := make([]byte, 8<<20)
+	rand.New(rand.NewSource(31)).Read(data)
+	path := filepath.Join(t.TempDir(), "large.img")
+	if err := os.WriteFile(path, data, 0600); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == "PUT" {
+			io.Copy(io.Discard, r.Body)
+			w.WriteHeader(201)
+		} else {
+			w.WriteHeader(404)
+		}
+	}))
+	defer server.Close()
+	transfer := &backupTransfer{agent: &Agent{rClient: resty.New()}, job: BackupJob{RepoID: "progress", BlobURL: server.URL + "/blobs/"},
+		encKey: bytes.Repeat([]byte{1}, 32), idKey: bytes.Repeat([]byte{2}, 32), known: map[string]bool{}, stats: &backupStats{}}
+	var updates []int64
+	item, err := transfer.file(context.Background(), path, info, 1<<20, time.Now(), func() { updates = append(updates, transfer.stats.Total) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(updates) < 2 || updates[0] <= 0 || updates[0] >= info.Size() || updates[len(updates)-1] != info.Size() || item.Size != info.Size() {
+		t.Fatal("no incremental file progress", updates)
+	}
+	for i := 1; i < len(updates); i++ {
+		if updates[i] <= updates[i-1] {
+			t.Fatal("non-monotonic progress", updates)
+		}
+	}
+}
+
+func backupPackUnpooledForBenchmark(key, aad, data []byte) ([]byte, error) {
+	var compressed bytes.Buffer
+	writer, err := zlib.NewWriterLevel(&compressed, zlib.BestSpeed)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := writer.Write(data); err != nil {
+		return nil, err
+	}
+	if err := writer.Close(); err != nil {
+		return nil, err
+	}
+	flag := byte(0)
+	if compressed.Len() < len(data) {
+		data, flag = compressed.Bytes(), 1
+	}
+	header := append([]byte(backupObjectV2), flag)
+	sealed, err := backupSeal(key, append(bytes.Clone(aad), header...), data)
+	if err != nil {
+		return nil, err
+	}
+	return append(header, sealed...), nil
 }

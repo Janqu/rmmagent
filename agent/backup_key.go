@@ -1,12 +1,9 @@
 package agent
 
 import (
-	"bytes"
 	"crypto/rand"
 	"encoding/json"
 	"fmt"
-	"os"
-	"path/filepath"
 
 	"golang.org/x/crypto/scrypt"
 )
@@ -31,8 +28,8 @@ func (a *Agent) backupKeyOperation(repo string, data map[string]string) (string,
 		return "", fmt.Errorf("invalid repository or key password (minimum 12 characters)")
 	}
 	envelope := backupKeyPackage{Version: 1, RepoID: repo, Salt: make([]byte, 32)}
-	if data["operation"] == "export" {
-		key, err := a.backupRepoKey(repo, false)
+	if data["operation"] == "export" || data["operation"] == "prepare" {
+		key, err := a.backupRepoKey(repo, data["operation"] == "prepare")
 		if err != nil {
 			return "", err
 		}
@@ -70,31 +67,7 @@ func (a *Agent) backupKeyOperation(repo string, data map[string]string) (string,
 	if len(key) != 32 {
 		return "", fmt.Errorf("invalid key length")
 	}
-	dir := filepath.Join(a.ProgramDir, "backup")
-	if err := os.MkdirAll(dir, 0700); err != nil {
-		return "", err
-	}
-	path := filepath.Join(dir, repo+".key")
-	existing, err := os.ReadFile(path)
-	if err == nil {
-		if bytes.Equal(existing, key) {
-			return "", nil
-		}
-		return "", fmt.Errorf("refusing to overwrite a different existing key")
-	}
-	if !os.IsNotExist(err) {
-		return "", err
-	}
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
-	if err != nil {
-		return "", err
-	}
-	defer f.Close()
-	if _, err := f.Write(key); err != nil {
-		return "", err
-	}
-	if err := f.Sync(); err != nil {
-		return "", err
-	}
-	return "", f.Close()
+	_, err = a.backupStoredKey(repo, false, key)
+	clear(key)
+	return "", err
 }

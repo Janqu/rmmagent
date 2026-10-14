@@ -2,6 +2,7 @@ package agent
 
 import (
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 
@@ -18,6 +19,12 @@ func temperatureSensor(name, source, path string, celsius float64) rmm.Temperatu
 	}
 }
 
+func parseSysfsTemperature(raw string) (float64, bool) {
+	value, err := strconv.ParseFloat(strings.TrimSpace(raw), 64)
+	value /= 1000
+	return value, err == nil && !math.IsNaN(value) && !math.IsInf(value, 0) && value >= -100 && value <= 200
+}
+
 func parseMilliCelsius(raw string) (float64, bool) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
@@ -30,7 +37,7 @@ func parseMilliCelsius(raw string) (float64, bool) {
 	if value > 1000 {
 		value = value / 1000
 	}
-	if value < -100 || value > 200 {
+	if math.IsNaN(value) || math.IsInf(value, 0) || value < -100 || value > 200 {
 		return 0, false
 	}
 	return value, true

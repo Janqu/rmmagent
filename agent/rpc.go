@@ -95,8 +95,24 @@ func (a *Agent) RunRPC() {
 			a.Logger.Errorln(err)
 			return
 		}
+		if payload == nil {
+			return
+		}
 
 		switch payload.Func {
+		case "snmp_capabilities", "snmp_dump", "snmp_scan":
+			go func(p *NatsMsg) {
+				var result map[string]interface{}
+				if p.Func == "snmp_capabilities" {
+					result = a.snmpCapabilities()
+				} else {
+					result = a.nativeSNMPDiagnostic(p.Func, p.Data)
+				}
+				var response []byte
+				if codec.NewEncoderBytes(&response, new(codec.MsgpackHandle)).Encode(result) == nil {
+					msg.Respond(response)
+				}
+			}(payload)
 		case "ping":
 			go func() {
 				var resp []byte
@@ -195,7 +211,7 @@ func (a *Agent) RunRPC() {
 			}(payload)
 		case "backup_capabilities":
 			var response []byte
-			if err := codec.NewEncoderBytes(&response, new(codec.MsgpackHandle)).Encode(map[string]interface{}{"restore_v2": true, "browse_tree": true, "backup_destination": true, "backup_lan": true, "backup_vss": backupVSSAvailable(), "backup_hooks": true}); err == nil {
+			if err := codec.NewEncoderBytes(&response, new(codec.MsgpackHandle)).Encode(map[string]interface{}{"restore_v2": true, "browse_tree": true, "backup_destination": true, "backup_lan": true, "backup_vss": backupVSSAvailable(), "backup_hooks": true, "backup_proxmox": backupProxmoxAvailable(), "backup_native": true, "backup_verify": true}); err == nil {
 				msg.Respond(response)
 			}
 
@@ -217,10 +233,24 @@ func (a *Agent) RunRPC() {
 				CheckURL: payload.CheckURL, PreviousManifestURL: payload.PreviousManifestURL,
 			})
 
+		case "backup_key_status":
+			state, tlsErr := nc.TLSConnectionState()
+			var response []byte
+			result := map[string]interface{}{"protocol": 2, "secure_transport": tlsErr == nil && state.HandshakeComplete && len(state.VerifiedChains) > 0 && !a.Insecure}
+			if err := codec.NewEncoderBytes(&response, new(codec.MsgpackHandle)).Encode(result); err == nil {
+				msg.Respond(response)
+			}
 		case "backup_key":
 			go func(p *NatsMsg) {
 				var response []byte
-				if err := codec.NewEncoderBytes(&response, new(codec.MsgpackHandle)).Encode(a.backupKey(p.RepoID, p.Data)); err == nil {
+				state, tlsErr := nc.TLSConnectionState()
+				result := map[string]interface{}{"error": "Backup key operations require verified TLS"}
+				if tlsErr == nil && state.HandshakeComplete && len(state.VerifiedChains) > 0 && !a.Insecure {
+					result = a.backupKey(p.RepoID, p.Data)
+				}
+				delete(p.Data, "password")
+				delete(p.Data, "package")
+				if err := codec.NewEncoderBytes(&response, new(codec.MsgpackHandle)).Encode(result); err == nil {
 					msg.Respond(response)
 				}
 			}(payload)
@@ -236,9 +266,10 @@ func (a *Agent) RunRPC() {
 			if cancel, ok := backupRestoreCancels.Load(payload.RestoreID); ok {
 				cancel.(context.CancelFunc)()
 			}
-		case "backup_restore", "backup_restore_v2":
+		case "backup_restore", "backup_restore_v2", "backup_verify":
 			go a.RunBackupRestore(BackupJob{
-				ID: payload.ID, RepoID: payload.RepoID, BlobURL: payload.BlobURL, ManifestURL: payload.ManifestURL,
+				VerifyOnly: payload.Func == "backup_verify",
+				ID:         payload.ID, RepoID: payload.RepoID, BlobURL: payload.BlobURL, ManifestURL: payload.ManifestURL,
 				RestoreID: payload.RestoreID, RestorePath: payload.RestorePath, Paths: payload.Paths, Endpoint: payload.Endpoint,
 			})
 
@@ -340,6 +371,76 @@ func (a *Agent) RunRPC() {
 				ret.Encode(procs)
 				msg.Respond(resp)
 			}()
+
+		case "file_browse":
+			go func(p *NatsMsg) {
+				var resp []byte
+				ret := codec.NewEncoderBytes(&resp, new(codec.MsgpackHandle))
+				ret.Encode(fileBrowse(p.Data["path"]))
+				msg.Respond(resp)
+			}(payload)
+
+		case "file_read":
+			go func(p *NatsMsg) {
+				var resp []byte
+				ret := codec.NewEncoderBytes(&resp, new(codec.MsgpackHandle))
+				ret.Encode(fileRead(p.Data["path"]))
+				msg.Respond(resp)
+			}(payload)
+
+		case "wol_send":
+			go func(p *NatsMsg) {
+				var resp []byte
+				ret := codec.NewEncoderBytes(&resp, new(codec.MsgpackHandle))
+				if err := sendWakeOnLAN(p.Data["mac"]); err != nil {
+					ret.Encode(err.Error())
+				} else {
+					ret.Encode("ok")
+				}
+				msg.Respond(resp)
+			}(payload)
+
+		case "health":
+			go func() {
+				var resp []byte
+				ret := codec.NewEncoderBytes(&resp, new(codec.MsgpackHandle))
+				ret.Encode(a.Health())
+				msg.Respond(resp)
+			}()
+
+		case "remote_session_start":
+			go func(p *NatsMsg) {
+				var resp []byte
+				ret := codec.NewEncoderBytes(&resp, new(codec.MsgpackHandle))
+				ret.Encode(a.remoteControlStart(p.Data, nc))
+				msg.Respond(resp)
+			}(payload)
+
+		case "remote_session_input":
+			go a.remoteControlInput(payload.Data)
+
+		case "remote_session_resize":
+			go a.remoteControlResize(payload.Data)
+
+		case "remote_session_display":
+			go a.remoteControlDisplay(payload.Data)
+
+		case "remote_session_shortcut":
+			go a.remoteControlShortcut(payload.Data)
+
+		case "remote_session_clipboard_get":
+			go a.remoteControlClipboardGet(payload.Data)
+
+		case "remote_session_clipboard_set":
+			go a.remoteControlClipboardSet(payload.Data)
+
+		case "remote_session_stop":
+			go func(p *NatsMsg) {
+				var resp []byte
+				ret := codec.NewEncoderBytes(&resp, new(codec.MsgpackHandle))
+				ret.Encode(a.remoteControlStop(p.Data))
+				msg.Respond(resp)
+			}(payload)
 
 		case "killproc":
 			go func(p *NatsMsg) {
@@ -714,6 +815,26 @@ func (a *Agent) RunRPC() {
 				msg.Respond(resp)
 			}(payload)
 
+		case "usb_list":
+			go func() {
+				var resp []byte
+				ret := codec.NewEncoderBytes(&resp, new(codec.MsgpackHandle))
+				devices := a.ListUSBDevices()
+				a.Logger.Debugln(devices)
+				ret.Encode(devices)
+				msg.Respond(resp)
+			}()
+
+		case "usb_action":
+			go func(p *NatsMsg) {
+				var resp []byte
+				ret := codec.NewEncoderBytes(&resp, new(codec.MsgpackHandle))
+				retData := a.USBAction(p.Data["action"], p.Data["instance_id"], p.Data["scope"])
+				a.Logger.Debugln(retData)
+				ret.Encode(retData)
+				msg.Respond(resp)
+			}(payload)
+
 		case "editwinsvc":
 			go func(p *NatsMsg) {
 				var resp []byte
@@ -791,6 +912,10 @@ func (a *Agent) RunRPC() {
 				case "mesh":
 					a.Logger.Debugln("Recovering mesh")
 					a.RecoverMesh()
+				case "tacagent":
+					ret.Encode(recoverTacticalAgent(a.ControlService))
+					msg.Respond(resp)
+					return
 				}
 
 				ret.Encode("ok")

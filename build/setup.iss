@@ -37,6 +37,9 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Files]
 Source: "C:\Users\Public\Documents\agent\tacticalrmm.exe"; DestDir: "{app}"; Flags: ignoreversion;
+#if DirExists("C:\Users\Public\Documents\agent\build\qdt-virtual-display\package")
+Source: "C:\Users\Public\Documents\agent\build\qdt-virtual-display\package\*"; DestDir: "{app}\drivers\qdt-virtual-display"; Flags: ignoreversion recursesubdirs createallsubdirs;
+#endif
 
 [Run]
 Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchProgram,{#StringChange(MyAppName, '&', '&&')}}"; Flags: nowait postinstall skipifsilent runascurrentuser

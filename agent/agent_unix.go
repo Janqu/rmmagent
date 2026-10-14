@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strconv"
@@ -441,18 +442,49 @@ func (a *Agent) getMeshNodeID() (string, error) {
 
 func (a *Agent) RecoverMesh() {
 	a.Logger.Infoln("Attempting mesh recovery")
-	opts := a.NewCMDOpts()
-	def := "systemctl restart meshagent.service"
-	switch runtime.GOOS {
-	case "linux":
-		opts.Command = def
-	case "darwin":
-		opts.Command = "launchctl kickstart -k system/meshagent"
-	default:
-		opts.Command = def
-	}
-	a.CmdV2(opts)
+	a.ForceKillMesh()
+	a.ReinstallMesh()
 	a.SyncMeshNodeID(true)
+}
+
+// reinstallMeshNix uninstalls any existing MeshAgent and installs the downloaded binary.
+// Matches agent_linux.sh InstallMesh/RemoveMesh (fake DISPLAY for headless install).
+func (a *Agent) reinstallMeshNix(meshbin string) {
+	a.ensureMeshClipboardTools()
+
+	fakeDisplay := []string{"XAUTHORITY=foo", "DISPLAY=bar", "LC_ALL=en_US.UTF-8", "LANGUAGE=en_US"}
+
+	if trmm.FileExists(a.MeshSystemEXE) {
+		a.Logger.Infoln("ReinstallMesh(): uninstalling existing mesh agent")
+		uopts := a.NewCMDOpts()
+		uopts.Command = fmt.Sprintf("%s -uninstall", a.MeshSystemEXE)
+		uopts.Timeout = 60
+		uopts.EnvVars = fakeDisplay
+		out := a.CmdV2(uopts)
+		if out.Status.Exit != 0 {
+			a.Logger.Errorln("ReinstallMesh() uninstall:", out.Stderr)
+		}
+		time.Sleep(1 * time.Second)
+	}
+
+	_ = os.RemoveAll(nixMeshDir)
+	if err := os.MkdirAll(nixMeshDir, 0755); err != nil {
+		a.Logger.Errorln("ReinstallMesh() mkdir:", err)
+		return
+	}
+
+	a.Logger.Infoln("ReinstallMesh(): installing mesh agent")
+	iopts := a.NewCMDOpts()
+	// Same form as darwin install in install.go (shell -c, not IsExecutable).
+	iopts.Command = fmt.Sprintf("%s -install --installPath=%s", meshbin, nixMeshDir)
+	iopts.Timeout = 120
+	iopts.EnvVars = fakeDisplay
+	out := a.CmdV2(iopts)
+	if out.Status.Exit != 0 {
+		a.Logger.Errorln("ReinstallMesh() install:", out.Stderr)
+		return
+	}
+	a.Logger.Infoln("ReinstallMesh(): mesh agent installed")
 }
 
 func (a *Agent) GetWMIInfo() map[string]interface{} {
@@ -651,6 +683,9 @@ func (a *Agent) GetWMIInfo() map[string]interface{} {
 		wmiInfo["gpus"] = ""
 	}
 	wmiInfo["ransomware_watch"] = a.RansomwareWatch()
+	if proxmox := collectProxmox(); proxmox != nil {
+		wmiInfo["proxmox"] = proxmox
+	}
 
 	return wmiInfo
 }
@@ -986,7 +1021,37 @@ func (a *Agent) UninstallCleanup() {}
 
 func (a *Agent) RunMigrations() {}
 
-func GetServiceStatus(name string) (string, error) { return "", nil }
+func GetServiceStatus(name string) (string, error) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return "", nil
+	}
+	switch runtime.GOOS {
+	case "linux":
+		// Reject anything that is not a plain systemd unit name.
+		if strings.ContainsAny(name, " \t\n;/|&$`\\\"'") || strings.Contains(name, "..") {
+			return "", fmt.Errorf("invalid service name")
+		}
+		unit := name
+		if !strings.HasSuffix(unit, ".service") {
+			unit += ".service"
+		}
+		out, err := exec.Command("systemctl", "is-active", unit).Output()
+		status := strings.TrimSpace(string(out))
+		if status == "" {
+			return "", err
+		}
+		return status, nil
+	case "darwin":
+		label, err := unixLaunchdLabel(name)
+		if err != nil {
+			return "", err
+		}
+		return darwinLaunchdStatus(label)
+	default:
+		return "", nil
+	}
+}
 
 func (a *Agent) GetPython(force bool) {}
 
@@ -1007,7 +1072,127 @@ func (a *Agent) GetEventLog(logName string, searchLastDays int) []rmm.EventLogMs
 func (a *Agent) GetServiceDetail(name string) trmm.WindowsService { return trmm.WindowsService{} }
 
 func (a *Agent) ControlService(name, action string) rmm.WinSvcResp {
-	return rmm.WinSvcResp{Success: false, ErrorMsg: "/na"}
+	action = strings.ToLower(strings.TrimSpace(action))
+	switch runtime.GOOS {
+	case "linux":
+		unit, err := unixSystemdUnit(name)
+		if err != nil {
+			return rmm.WinSvcResp{Success: false, ErrorMsg: err.Error()}
+		}
+		switch action {
+		case "start", "stop", "restart", "reload":
+		default:
+			return rmm.WinSvcResp{Success: false, ErrorMsg: "unsupported action"}
+		}
+		out, err := exec.Command("systemctl", action, unit).CombinedOutput()
+		if err != nil {
+			msg := strings.TrimSpace(string(out))
+			if msg == "" {
+				msg = err.Error()
+			}
+			return rmm.WinSvcResp{Success: false, ErrorMsg: msg}
+		}
+		return rmm.WinSvcResp{Success: true}
+	case "darwin":
+		label, err := unixLaunchdLabel(name)
+		if err != nil {
+			return rmm.WinSvcResp{Success: false, ErrorMsg: err.Error()}
+		}
+		return darwinControlLaunchd(label, action)
+	default:
+		return rmm.WinSvcResp{Success: false, ErrorMsg: "service control is only supported on Linux/Windows/macOS"}
+	}
+}
+
+// unixSystemdUnit maps TRMM/Windows service names to systemd units we manage.
+func unixSystemdUnit(name string) (string, error) {
+	n := strings.ToLower(strings.TrimSpace(name))
+	n = strings.TrimSuffix(n, ".service")
+	switch n {
+	case "mesh agent", "meshagent":
+		return "meshagent.service", nil
+	case "tacticalrmm", "tacticalagent":
+		return "tacticalagent.service", nil
+	default:
+		// Allow explicit safe unit names (alnum, dash, underscore, @).
+		if n == "" || strings.ContainsAny(n, " \t\n;/|&$`\\\"'") || strings.Contains(n, "..") {
+			return "", fmt.Errorf("invalid service name")
+		}
+		for _, r := range n {
+			if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '-' || r == '_' || r == '@' || r == '.' {
+				continue
+			}
+			return "", fmt.Errorf("invalid service name")
+		}
+		return n + ".service", nil
+	}
+}
+
+// unixLaunchdLabel maps TRMM/Windows service names to launchd labels we manage.
+func unixLaunchdLabel(name string) (string, error) {
+	n := strings.ToLower(strings.TrimSpace(name))
+	n = strings.TrimPrefix(n, "system/")
+	n = strings.TrimSuffix(n, ".plist")
+	switch n {
+	case "mesh agent", "meshagent":
+		return "meshagent", nil
+	case "tacticalrmm", "tacticalagent":
+		return "tacticalagent", nil
+	default:
+		if n == "" || strings.ContainsAny(n, " \t\n;/|&$`\\\"'") || strings.Contains(n, "..") {
+			return "", fmt.Errorf("invalid service name")
+		}
+		for _, r := range n {
+			if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '-' || r == '_' || r == '.' {
+				continue
+			}
+			return "", fmt.Errorf("invalid service name")
+		}
+		return n, nil
+	}
+}
+
+// darwinLaunchdStatus returns running/stopped for a system launchd label.
+func darwinLaunchdStatus(label string) (string, error) {
+	out, err := exec.Command("launchctl", "print", "system/"+label).CombinedOutput()
+	text := string(out)
+	if err != nil {
+		// Not loaded / unknown → stopped (reconcile may start/reinstall).
+		if strings.Contains(strings.ToLower(text), "could not find service") ||
+			strings.Contains(strings.ToLower(text), "no such process") {
+			return "stopped", nil
+		}
+		return "", err
+	}
+	lower := strings.ToLower(text)
+	if strings.Contains(lower, "state = running") || strings.Contains(lower, "state = active") {
+		return "running", nil
+	}
+	return "stopped", nil
+}
+
+func darwinControlLaunchd(label, action string) rmm.WinSvcResp {
+	target := "system/" + label
+	var cmd *exec.Cmd
+	switch action {
+	case "start":
+		cmd = exec.Command("launchctl", "kickstart", target)
+	case "restart":
+		cmd = exec.Command("launchctl", "kickstart", "-k", target)
+	case "stop":
+		cmd = exec.Command("launchctl", "kill", "SIGTERM", target)
+	default:
+		return rmm.WinSvcResp{Success: false, ErrorMsg: "unsupported action"}
+	}
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		msg := strings.TrimSpace(string(out))
+		if msg == "" {
+			msg = err.Error()
+		}
+		return rmm.WinSvcResp{Success: false, ErrorMsg: msg}
+	}
+	return rmm.WinSvcResp{Success: true}
 }
 
 func (a *Agent) EditService(name, startupType string) rmm.WinSvcResp {

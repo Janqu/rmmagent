@@ -1286,6 +1286,9 @@ func (a *Agent) RecoverMesh() {
 	a.SyncMeshNodeID(true)
 }
 
+// reinstallMeshNix is a no-op on Windows; nix path lives in agent_unix.go.
+func (a *Agent) reinstallMeshNix(meshbin string) {}
+
 func (a *Agent) getMeshNodeID() (string, error) {
 	out, err := CMD(a.MeshSystemEXE, []string{"-nodeid"}, 10, false)
 	if err != nil {
