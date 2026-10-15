@@ -1,0 +1,36 @@
+name: Build QDT Windows Installer
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - qdt-agent-installer-ci
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Stage fixed Inno source path
+        shell: pwsh
+        run: |
+          $target = 'C:\Users\Public\Documents\agent'
+          New-Item -ItemType Directory -Force -Path $target | Out-Null
+          Copy-Item "$PWD\*" $target -Recurse -Force
+
+      - name: Build installer
+        shell: pwsh
+        run: |
+          & 'C:\Program Files (x86)\Inno Setup 6\ISCC.exe' 'C:\Users\Public\Documents\agent\build\setup.iss'
+          if ($LASTEXITCODE) { throw "ISCC failed with exit code $LASTEXITCODE" }
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: qdt-rmm-agent-2.11.1-windows-amd64-setup-unsigned
+          path: C:\Users\Public\Documents\agent\build\Output\qdt-rmm-agent-2.11.1-windows-amd64-setup.exe
+          if-no-files-found: error
+          retention-days: 7
