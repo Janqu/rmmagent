@@ -1,5 +1,5 @@
 #define MyAppName "QDT RMM"
-#define MyAppVersion "2.11.1"
+#define MyAppVersion "2.11.1-qdt10"
 #define MyAppPublisher "QDT"
 #define MyAppURL "https://q-dt.de"
 #define MyAppExeName "tacticalrmm.exe"
@@ -19,7 +19,7 @@ DefaultDirName="{sd}\Program Files\TacticalAgent"
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 OutputDir=Output
-OutputBaseFilename=qdt-rmm-agent-2.11.1-windows-amd64-setup
+OutputBaseFilename=tacticalagent-v2.11.1-qdt10-windows-amd64
 DisableDirPage=yes
 SetupLogging=yes
 DisableProgramGroupPage=yes

@@ -30,7 +30,7 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: qdt-rmm-agent-2.11.1-windows-amd64-setup-unsigned
-          path: C:\Users\Public\Documents\agent\build\Output\qdt-rmm-agent-2.11.1-windows-amd64-setup.exe
+          name: tacticalagent-v2.11.1-qdt10-windows-amd64-unsigned
+          path: C:\Users\Public\Documents\agent\build\Output\tacticalagent-v2.11.1-qdt10-windows-amd64.exe
           if-no-files-found: error
           retention-days: 7
